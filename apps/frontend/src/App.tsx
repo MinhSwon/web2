@@ -305,7 +305,7 @@ function jobIsActive(job?: Job) { return Boolean(job && ["PENDING", "QUEUED", "P
 
 function JobProgress({ job, onDownload }: { job?: Job; onDownload: () => void }) {
   const statusLabel = useMemo(() => ({
-    PENDING: "Đang khởi tạo", QUEUED: "Trong hàng đợi", PROCESSING: "Đang dựng video",
+    PENDING: "Đang khởi tạo", QUEUED: "Trong hàng đợi", PROCESSING: "Đang dựng video (Kịch bản, Giọng đọc, Phụ đề, Motion)",
     COMPLETED: "Video hoàn tất", FAILED: "Render thất bại", CANCELED: "Đã hủy",
   }[job?.status ?? "PENDING"]), [job?.status]);
   if (!job) return <div className="job-empty"><span className="step-number">03</span><p>Tiến độ render sẽ xuất hiện tại đây.</p></div>;
@@ -315,7 +315,19 @@ function JobProgress({ job, onDownload }: { job?: Job; onDownload: () => void })
       <div className="progress-track"><div style={{ width: `${job.progress}%` }} /></div>
       <p>{job.message || job.stage}</p>
       {job.error_code && <code>{job.error_code}</code>}
-      {job.status === "COMPLETED" && <button type="button" className="download-button" onClick={onDownload}>Tải video MP4</button>}
+      {job.status === "COMPLETED" && (
+        <div className="completed-preview-block" style={{ marginTop: "1rem" }}>
+          {job.download_url && (
+            <video
+              src={job.download_url}
+              controls
+              autoPlay
+              style={{ width: "100%", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.15)", marginBottom: "0.8rem", backgroundColor: "#000" }}
+            />
+          )}
+          <button type="button" className="download-button" onClick={onDownload}>Tải video MP4</button>
+        </div>
+      )}
     </div>
   );
 }

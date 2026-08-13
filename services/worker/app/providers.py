@@ -9,30 +9,54 @@ import httpx
 from .settings import settings
 
 
-async def generate_script(topic: str, asset_count: int) -> str:
-    prompt = (
-        f"Viết kịch bản thuyết minh tiếng Việt ngắn cho video chủ đề '{topic}', "
-        f"gồm {asset_count} cảnh ảnh. Chỉ trả về lời thuyết minh, tối đa {asset_count * 24} từ."
+async def generate_script(topic: str, image_paths: list[Path] = None) -> str:
+    asset_count = len(image_paths) if image_paths else 1
+    base_prompt = (
+        f"Hãy nhìn vào các bức ảnh được gửi kèm và viết một kịch bản thuyết minh tiếng Việt lôi cuốn cho video "
+        f"chủ đề '{topic}'. Mô tả chính xác nội dung, nhân vật, cảnh vật và cảm xúc trong các bức ảnh. "
+        f"Chỉ trả về duy nhất lời thuyết minh tiếng Việt, tối đa {asset_count * 30} từ, viết thành câu hoàn chỉnh."
     )
+
+    # 1. OpenAI GPT-4o-mini Vision
     if settings.openai_api_key:
         try:
+            import base64
+            content_parts = [{"type": "text", "text": base_prompt}]
+            if image_paths:
+                for img in image_paths[:5]:
+                    mime = "image/jpeg" if img.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+                    b64 = base64.b64encode(img.read_bytes()).decode()
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"}
+                    })
             async with httpx.AsyncClient(timeout=45) as client:
                 response = await client.post(
                     "https://api.openai.com/v1/chat/completions",
                     headers={"Authorization": f"Bearer {settings.openai_api_key}"},
                     json={
                         "model": settings.openai_model,
-                        "messages": [{"role": "user", "content": prompt}],
+                        "messages": [{"role": "user", "content": content_parts}],
                         "temperature": 0.7,
                     },
                 )
                 response.raise_for_status()
                 return response.json()["choices"][0]["message"]["content"].strip()
         except Exception as error:
-            print(f"OpenAI script generation failed ({error}), trying fallback...")
+            print(f"OpenAI Vision script generation failed ({error}), trying fallback...")
 
+    # 2. Google Gemini Flash Vision
     if settings.gemini_api_key:
         try:
+            import base64
+            parts = [{"text": base_prompt}]
+            if image_paths:
+                for img in image_paths[:5]:
+                    mime = "image/jpeg" if img.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+                    b64 = base64.b64encode(img.read_bytes()).decode()
+                    parts.append({
+                        "inline_data": {"mime_type": mime, "data": b64}
+                    })
             url = (
                 "https://generativelanguage.googleapis.com/v1beta/models/"
                 "gemini-flash-latest:generateContent"
@@ -41,14 +65,15 @@ async def generate_script(topic: str, asset_count: int) -> str:
                 response = await client.post(
                     url,
                     headers={"x-goog-api-key": settings.gemini_api_key},
-                    json={"contents": [{"parts": [{"text": prompt}]}]},
+                    json={"contents": [{"parts": parts}]},
                 )
                 response.raise_for_status()
                 payload = response.json()
                 return payload["candidates"][0]["content"]["parts"][0]["text"].strip()
         except Exception as error:
-            print(f"Gemini script generation failed ({error}), trying fallback...")
+            print(f"Gemini Vision script generation failed ({error}), trying fallback...")
 
+    # 3. Groq LLM
     if settings.groq_api_key:
         try:
             async with httpx.AsyncClient(timeout=45) as client:
@@ -57,7 +82,7 @@ async def generate_script(topic: str, asset_count: int) -> str:
                     headers={"Authorization": f"Bearer {settings.groq_api_key}"},
                     json={
                         "model": "llama-3.3-70b-versatile",
-                        "messages": [{"role": "user", "content": prompt}],
+                        "messages": [{"role": "user", "content": base_prompt}],
                         "temperature": 0.7,
                     },
                 )

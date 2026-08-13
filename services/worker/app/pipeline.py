@@ -47,8 +47,8 @@ class VideoPipeline:
             await self.callback(job_id, "PROCESSING", 5, "download", "Đang tải ảnh đầu vào")
             image_paths = await self._download_assets(assets, work_dir)
 
-            await self.callback(job_id, "PROCESSING", 18, "script", "Đang xây dựng kịch bản")
-            script = await generate_script(config.get("topic", "Storytelling"), len(image_paths))
+            await self.callback(job_id, "PROCESSING", 18, "script", "Đang phân tích hình ảnh & xây dựng kịch bản")
+            script = await generate_script(config.get("topic", "Storytelling"), image_paths)
             (work_dir / "script.txt").write_text(script, encoding="utf-8")
 
             image_duration = float(config.get("imageDuration", 3))
@@ -86,6 +86,7 @@ class VideoPipeline:
             await self.callback(
                 job_id, "COMPLETED", 100, "completed", "Video đã sẵn sàng",
                 outputKey=output_key,
+                script=script,
             )
         except Exception as error:
             try:
@@ -126,7 +127,7 @@ class VideoPipeline:
             if not has_ai_motion:
                 raise PipelineError(
                     f"Không thể tạo video AI từ ảnh #{index + 1}: "
-                    "Hãy kiểm tra API Key cho AI Video (HF_TOKEN trên Hugging Face, GOOGLE_VEO_API_KEY hoặc FAL_KEY) trong file .env"
+                    "Hãy kiểm tra API Key cho AI Video trong file .env"
                 )
             clips.append(clip)
         return clips
@@ -140,11 +141,11 @@ class VideoPipeline:
         ])
 
     async def _mux(self, video: Path, audio: Path, captions: Path, output: Path) -> None:
+        captions_str = str(captions).replace("\\", "/").replace(":", "\\:")
         await run_command([
-            "ffmpeg", "-y", "-i", str(video), "-i", str(audio), "-i", str(captions),
-            "-map", "0:v:0", "-map", "1:a:0", "-map", "2:0", "-c:v", "copy",
-            "-c:a", "aac", "-af", "apad", "-c:s", "mov_text", "-shortest",
-            "-metadata:s:s:0", "language=vie", "-movflags", "+faststart", str(output),
+            "ffmpeg", "-y", "-i", str(video), "-i", str(audio),
+            "-vf", f"subtitles='{captions_str}':force_style='FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2'",
+            "-c:v", "libx264", "-c:a", "aac", "-shortest", "-movflags", "+faststart", str(output),
         ])
 
 
