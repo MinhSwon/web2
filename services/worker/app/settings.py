@@ -23,6 +23,7 @@ class Settings:
     kling_api_key: str = os.getenv("KLING_API_KEY", "").strip()
     shotstack_api_key: str = os.getenv("SHOTSTACK_API_KEY", "").strip()
     shotstack_env: str = os.getenv("SHOTSTACK_ENV", "stage").strip()
+    magichour_api_key: str = os.getenv("MAGICHOUR_API_KEY", os.getenv("MAGIC_HOUR_API_KEY", "")).strip()
     hf_token: str = os.getenv("HF_TOKEN", os.getenv("HUGGINGFACE_TOKEN", "")).strip()
     motion_provider: str = os.getenv("MOTION_PROVIDER", "ffmpeg").strip()
     tts_provider: str = os.getenv("TTS_PROVIDER", "edge").strip()

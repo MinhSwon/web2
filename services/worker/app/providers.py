@@ -195,29 +195,87 @@ def write_captions(text: str, duration: float, output: Path) -> None:
 
 
 async def generate_motion_clip(image_path: Path, output_clip: Path, prompt: str = "") -> bool:
-    if settings.motion_provider in ("huggingface", "hf") or (settings.motion_provider == "auto" and settings.hf_token):
-        if settings.hf_token:
+    # 1. Hugging Face Space
+    if settings.motion_provider in ("huggingface", "hf", "auto") and settings.hf_token:
+        hf_spaces = [
+            "mediasynthesismuseum/stable-video-diffusion",
+            "multimodalart/stable-video-diffusion"
+        ]
+        for space_id in hf_spaces:
             try:
                 from gradio_client import Client, handle_file
                 headers = {"Authorization": f"Bearer {settings.hf_token}"}
                 client = await asyncio.to_thread(
-                    Client, "multimodalart/stable-video-diffusion", headers=headers
+                    Client, space_id, headers=headers
                 )
-                res = await asyncio.to_thread(
-                    client.predict,
-                    image=handle_file(str(image_path)),
-                    seed=42,
-                    randomize_seed=True,
-                    motion_bucket_id=127,
-                    fps_id=6,
-                    api_name="/video"
+                res = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.predict,
+                        image=handle_file(str(image_path)),
+                        seed=42,
+                        randomize_seed=True,
+                        motion_bucket_id=127,
+                        fps_id=6,
+                        api_name="/video"
+                    ),
+                    timeout=25.0
                 )
-                video_file = res[0] if isinstance(res, (tuple, list)) else res.get("video") if isinstance(res, dict) else res
+                video_dict = res[0] if isinstance(res, (tuple, list)) else res
+                video_file = video_dict.get("video") if isinstance(video_dict, dict) else video_dict
                 if video_file and Path(video_file).exists():
                     shutil.copy(video_file, output_clip)
-                    return output_clip.exists() and output_clip.stat().st_size > 0
+                    if output_clip.exists() and output_clip.stat().st_size > 0:
+                        return True
             except Exception as err:
-                print(f"Hugging Face Space motion error: {err}")
+                print(f"Hugging Face Space ({space_id}) error: {err}")
+
+    # 2. Magic Hour AI (High Quality Image-to-Video)
+    if settings.motion_provider in ("magichour", "magichourai", "auto") and settings.magichour_api_key:
+        try:
+            headers = {
+                "Authorization": f"Bearer {settings.magichour_api_key}",
+                "Content-Type": "application/json"
+            }
+            ext = image_path.suffix.lstrip('.') or 'png'
+            async with httpx.AsyncClient(timeout=180) as client:
+                res = await client.post(
+                    "https://api.magichour.ai/v1/files/upload-urls",
+                    headers=headers,
+                    json={"items": [{"type": "image", "extension": ext}]}
+                )
+                if res.status_code == 200:
+                    upload_info = res.json()["items"][0]
+                    upload_url = upload_info["upload_url"]
+                    file_path = upload_info["file_path"]
+
+                    up_res = await client.put(upload_url, content=image_path.read_bytes(), headers={"Content-Type": f"image/{ext}"})
+                    if up_res.status_code in (200, 201):
+                        job_payload = {
+                            "end_seconds": 5,
+                            "assets": {"image_file_path": file_path},
+                            "style": {"prompt": prompt or "Animate image smoothly with natural motion and cinematic detail"}
+                        }
+                        job_res = await client.post("https://api.magichour.ai/v1/image-to-video", headers=headers, json=job_payload)
+                        if job_res.status_code in (200, 201, 202):
+                            job_id = job_res.json().get("id")
+                            for _ in range(60):
+                                await asyncio.sleep(4)
+                                poll = await client.get(f"https://api.magichour.ai/v1/video-projects/{job_id}", headers=headers)
+                                poll_data = poll.json()
+                                status = poll_data.get("status")
+                                if status == "complete":
+                                    downloads = poll_data.get("downloads", [])
+                                    dl_url = downloads[0]["url"] if downloads else poll_data.get("download", {}).get("url")
+                                    if dl_url:
+                                        video_res = await client.get(dl_url)
+                                        output_clip.write_bytes(video_res.content)
+                                        if output_clip.exists() and output_clip.stat().st_size > 0:
+                                            return True
+                                elif status in ("error", "failed"):
+                                    print(f"Magic Hour render failed: {poll_data}")
+                                    break
+        except Exception as err:
+            print(f"Magic Hour motion error: {err}")
 
     if settings.motion_provider in ("kling", "klingai") or (settings.motion_provider == "auto" and settings.kling_api_key):
         if settings.kling_api_key:
@@ -299,83 +357,83 @@ async def generate_motion_clip(image_path: Path, output_clip: Path, prompt: str 
             except Exception as err:
                 print(f"Fal.ai Omni motion error: {err}")
 
-    if settings.motion_provider in ("shotstack",) or (settings.motion_provider == "auto" and settings.shotstack_api_key):
-        if settings.shotstack_api_key:
+    # Fallback to Shotstack if available
+    if settings.shotstack_api_key:
+        try:
+            public_img_url = None
             try:
-                public_img_url = None
-                try:
-                    async with httpx.AsyncClient(timeout=30) as client:
-                        files = {"fileToUpload": (image_path.name, image_path.read_bytes(), "image/jpeg")}
-                        data = {"reqtype": "fileupload"}
-                        up_res = await client.post("https://catbox.moe/user/api.php", files=files, data=data)
-                        if up_res.status_code == 200 and up_res.text.startswith("http"):
-                            public_img_url = up_res.text.strip()
-                except Exception as up_err:
-                    print(f"Catbox image upload warning: {up_err}")
-
-                if not public_img_url:
-                    public_img_url = "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1024"
-
-                effects = ["zoomIn", "slideLeft", "zoomOut", "slideRight", "slideUp"]
-                chosen_effect = effects[abs(hash(image_path.name)) % len(effects)]
-
-                env = "stage" if settings.shotstack_env == "stage" else "v1"
-                host = f"https://api.shotstack.io/edit/{env}/render"
-                headers = {
-                    "x-api-key": settings.shotstack_api_key,
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "timeline": {
-                        "background": "#000000",
-                        "tracks": [
-                            {
-                                "clips": [
-                                    {
-                                        "asset": {
-                                            "type": "image",
-                                            "src": public_img_url
-                                        },
-                                        "start": 0,
-                                        "length": 5,
-                                        "effect": chosen_effect
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    "output": {
-                        "format": "mp4",
-                        "resolution": "sd"
-                    }
-                }
                 async with httpx.AsyncClient(timeout=30) as client:
-                    response = await client.post(host, headers=headers, json=payload)
-                    if response.status_code in (200, 201):
-                        data = response.json()
-                        render_id = data.get("response", {}).get("id") or data.get("id")
-                        if render_id:
-                            poll_url = f"https://api.shotstack.io/edit/{env}/render/{render_id}"
-                            for _ in range(60):
-                                await asyncio.sleep(4)
-                                poll_res = await client.get(poll_url, headers=headers)
-                                if poll_res.status_code == 200:
-                                    res_data = poll_res.json().get("response", {})
-                                    status = res_data.get("status")
-                                    if status == "done":
-                                        video_url = res_data.get("url")
-                                        if video_url:
-                                            video_res = await client.get(video_url)
-                                            video_res.raise_for_status()
-                                            output_clip.write_bytes(video_res.content)
-                                            return output_clip.exists() and output_clip.stat().st_size > 0
-                                    elif status in ("failed", "error"):
-                                        print(f"Shotstack render failed: {res_data}")
-                                        break
-                    else:
-                        print(f"Shotstack submit response ({response.status_code}): {response.text}")
-            except Exception as err:
-                print(f"Shotstack motion error: {err}")
+                    files = {"fileToUpload": (image_path.name, image_path.read_bytes(), "image/jpeg")}
+                    data = {"reqtype": "fileupload"}
+                    up_res = await client.post("https://catbox.moe/user/api.php", files=files, data=data)
+                    if up_res.status_code == 200 and up_res.text.startswith("http"):
+                        public_img_url = up_res.text.strip()
+            except Exception as up_err:
+                print(f"Catbox image upload warning: {up_err}")
+
+            if not public_img_url:
+                public_img_url = "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1024"
+
+            effects = ["zoomIn", "slideLeft", "zoomOut", "slideRight", "slideUp"]
+            chosen_effect = effects[abs(hash(image_path.name)) % len(effects)]
+
+            env = "stage" if settings.shotstack_env == "stage" else "v1"
+            host = f"https://api.shotstack.io/edit/{env}/render"
+            headers = {
+                "x-api-key": settings.shotstack_api_key,
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "timeline": {
+                    "background": "#000000",
+                    "tracks": [
+                        {
+                            "clips": [
+                                {
+                                    "asset": {
+                                        "type": "image",
+                                        "src": public_img_url
+                                    },
+                                    "start": 0,
+                                    "length": 5,
+                                    "effect": chosen_effect
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "output": {
+                    "format": "mp4",
+                    "resolution": "sd"
+                }
+            }
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(host, headers=headers, json=payload)
+                if response.status_code in (200, 201):
+                    data = response.json()
+                    render_id = data.get("response", {}).get("id") or data.get("id")
+                    if render_id:
+                        poll_url = f"https://api.shotstack.io/edit/{env}/render/{render_id}"
+                        for _ in range(60):
+                            await asyncio.sleep(4)
+                            poll_res = await client.get(poll_url, headers=headers)
+                            if poll_res.status_code == 200:
+                                res_data = poll_res.json().get("response", {})
+                                status = res_data.get("status")
+                                if status == "done":
+                                    video_url = res_data.get("url")
+                                    if video_url:
+                                        video_res = await client.get(video_url)
+                                        video_res.raise_for_status()
+                                        output_clip.write_bytes(video_res.content)
+                                        return output_clip.exists() and output_clip.stat().st_size > 0
+                                elif status in ("failed", "error"):
+                                    print(f"Shotstack render failed: {res_data}")
+                                    break
+                else:
+                    print(f"Shotstack submit response ({response.status_code}): {response.text}")
+        except Exception as err:
+            print(f"Shotstack motion error: {err}")
 
     if settings.motion_provider in ("veo", "google_veo") or (settings.motion_provider == "auto" and settings.google_veo_api_key):
         if settings.google_veo_api_key:
