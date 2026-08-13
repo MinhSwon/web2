@@ -104,13 +104,30 @@ export function createApp() {
   }));
 
   app.post("/api/auth/google", asyncRoute(async (req, res) => {
-    const { email, displayName } = req.body;
-    if (!email || typeof email !== "string") {
-      return res.status(400).json({ error: "INVALID_EMAIL" });
+    let cleanEmail = "";
+    let name = "";
+
+    if (req.body.credential) {
+      try {
+        const decoded: any = jwt.decode(req.body.credential);
+        if (decoded && decoded.email) {
+          cleanEmail = decoded.email.toLowerCase().trim();
+          name = decoded.name || cleanEmail.split("@")[0];
+        }
+      } catch (e) {
+        console.error("Failed to decode Google JWT token", e);
+      }
     }
-    const cleanEmail = email.toLowerCase().trim();
-    const name = displayName || cleanEmail.split("@")[0];
-    
+
+    if (!cleanEmail) {
+      const { email, displayName } = req.body;
+      if (!email || typeof email !== "string") {
+        return res.status(400).json({ error: "INVALID_EMAIL" });
+      }
+      cleanEmail = email.toLowerCase().trim();
+      name = displayName || cleanEmail.split("@")[0];
+    }
+
     let result = await query<{ id: string; email: string; display_name: string; role: string; credits: number }>(
       "SELECT id, email, display_name, role, credits FROM users WHERE email = $1",
       [cleanEmail]

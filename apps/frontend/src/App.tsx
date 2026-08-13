@@ -127,6 +127,34 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    const g = (window as any).google;
+    if (g?.accounts?.id) {
+      try {
+        g.accounts.id.initialize({
+          client_id: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+          callback: async (response: any) => {
+            if (!response.credential) return;
+            setBusy(true); setError("");
+            try {
+              const data = await api<{ token: string; user: User }>("/api/auth/google", {
+                method: "POST",
+                body: JSON.stringify({ credential: response.credential }),
+              });
+              onAuthenticated(data.token, data.user);
+            } catch (caught) { setError(errorText(caught)); } finally { setBusy(false); }
+          },
+        });
+        const container = document.getElementById("google-gsi-btn");
+        if (container) {
+          g.accounts.id.renderButton(container, { theme: "outline", size: "large", text: "continue_with" });
+        }
+      } catch (e) {
+        console.log("Google GSI init notice:", e);
+      }
+    }
+  }, [onAuthenticated]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true); setError("");
@@ -169,6 +197,8 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
           <span className="eyebrow">Bắt đầu</span>
           <h2>{mode === "register" ? "Mở studio của bạn" : "Trở lại studio"}</h2>
           
+          <div id="google-gsi-btn" style={{ marginBottom: "12px", display: "flex", justifyContent: "center" }}></div>
+
           <button
             type="button"
             className="secondary-button google-auth-btn"
@@ -196,7 +226,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
               <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
               <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
             </svg>
-            Đăng nhập nhanh bằng Gmail
+            Đăng nhập bằng Gmail (Google Sign-In)
           </button>
 
           <div style={{ textAlign: "center", margin: "10px 0", color: "#888", fontSize: "12px" }}>— HOẶC BẰNG EMAIL —</div>
