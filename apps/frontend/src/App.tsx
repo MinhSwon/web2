@@ -25,6 +25,14 @@ export default function App() {
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [notice, setNotice] = useState("");
   const [currentTab, setCurrentTab] = useState<"studio" | "library" | "admin">("studio");
+  const [shareTarget, setShareTarget] = useState<{ jobId: string; title: string } | null>(null);
+
+  const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const sharedJobId = searchParams.get("v");
+
+  if (sharedJobId) {
+    return <PublicVideoViewer jobId={sharedJobId} />;
+  }
 
   const loadProjects = useCallback(async () => {
     if (!token) return;
@@ -114,7 +122,7 @@ export default function App() {
       </header>
 
       {currentTab === "library" ? (
-        <RenderedLibrary token={token} />
+        <RenderedLibrary token={token} onShare={(jobId, title) => setShareTarget({ jobId, title })} />
       ) : currentTab === "admin" ? (
         <AdminDashboard token={token} />
       ) : (
@@ -157,10 +165,19 @@ export default function App() {
                   setUser(me.user);
                 }}
                 onError={(error) => setNotice(errorText(error))}
+                onShare={(jobId) => setShareTarget({ jobId, title: detail.project.title })}
               />
             )}
           </section>
         </main>
+      )}
+
+      {shareTarget && (
+        <ShareModal
+          jobId={shareTarget.jobId}
+          projectTitle={shareTarget.title}
+          onClose={() => setShareTarget(null)}
+        />
       )}
     </div>
   );
@@ -339,8 +356,8 @@ function EmptyState() {
   return <div className="empty-state"><span>✦</span><h2>Tạo dự án đầu tiên</h2><p>Studio sẽ xuất hiện ở đây sau khi bạn tạo một dự án.</p></div>;
 }
 
-function ProjectEditor({ token, detail, onChanged, onError }: {
-  token: string; detail: ProjectDetail; onChanged: () => Promise<void>; onError: (error: unknown) => void;
+function ProjectEditor({ token, detail, onChanged, onError, onShare }: {
+  token: string; detail: ProjectDetail; onChanged: () => Promise<void>; onError: (error: unknown) => void; onShare: (jobId: string) => void;
 }) {
   const latest = detail.jobs[0];
   const [job, setJob] = useState<Job | undefined>(latest);
@@ -440,7 +457,7 @@ function ProjectEditor({ token, detail, onChanged, onError }: {
           </div>
           <button className="render-button" disabled={!canRender || rendering}>{rendering ? "Đang gửi..." : "Render video"}<span>→</span></button>
         </form>
-        <JobProgress job={job} onDownload={download} />
+        <JobProgress job={job} onDownload={download} onShare={onShare} />
       </aside>
     </div>
   );
@@ -448,7 +465,7 @@ function ProjectEditor({ token, detail, onChanged, onError }: {
 
 function jobIsActive(job?: Job) { return Boolean(job && ["PENDING", "QUEUED", "PROCESSING"].includes(job.status)); }
 
-function JobProgress({ job, onDownload }: { job?: Job; onDownload: () => void }) {
+function JobProgress({ job, onDownload, onShare }: { job?: Job; onDownload: () => void; onShare: (jobId: string) => void }) {
   const statusLabel = useMemo(() => ({
     PENDING: "Đang khởi tạo", QUEUED: "Trong hàng đợi", PROCESSING: "Đang dựng video (Kịch bản, Giọng đọc, Phụ đề, Motion)",
     COMPLETED: "Video hoàn tất", FAILED: "Render thất bại", CANCELED: "Đã hủy",
@@ -470,7 +487,19 @@ function JobProgress({ job, onDownload }: { job?: Job; onDownload: () => void })
               style={{ width: "100%", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.15)", marginBottom: "0.8rem", backgroundColor: "#000" }}
             />
           )}
-          <button type="button" className="download-button" onClick={onDownload}>Tải video MP4</button>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button type="button" className="download-button" style={{ flex: 1 }} onClick={onDownload}>▶ Tải Video MP4</button>
+            <button
+              type="button"
+              style={{
+                backgroundColor: "#3b82f6", color: "#fff", border: "none",
+                borderRadius: "6px", padding: "10px 14px", fontWeight: "bold", fontSize: "13px", cursor: "pointer"
+              }}
+              onClick={() => onShare(job.id)}
+            >
+              🔗 Chia Sẻ
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -486,7 +515,7 @@ type RenderedVideo = {
   download_url: string;
 };
 
-function RenderedLibrary({ token }: { token: string }) {
+function RenderedLibrary({ token, onShare }: { token: string; onShare: (jobId: string, title: string) => void }) {
   const [videos, setVideos] = useState<RenderedVideo[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -566,9 +595,19 @@ function RenderedLibrary({ token }: { token: string }) {
                       fontSize: "14px"
                     }}
                   >
-                    ▶ Tải Video MP4
+                    ▶ Tải Video
                   </a>
                 )}
+                <button
+                  type="button"
+                  onClick={() => onShare(video.id, video.project_title)}
+                  style={{
+                    backgroundColor: "#3b82f6", color: "#fff", border: "none",
+                    borderRadius: "6px", padding: "10px 14px", fontWeight: "bold", fontSize: "13px", cursor: "pointer"
+                  }}
+                >
+                  🔗 Chia Sẻ
+                </button>
               </div>
             </div>
           ))}
@@ -795,6 +834,178 @@ function AdminDashboard({ token }: { token: string }) {
           </table>
         </div>
       </section>
+    </div>
+  );
+}
+
+function ShareModal({ jobId, projectTitle, onClose }: { jobId: string; projectTitle: string; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const shareUrl = `${window.location.origin}/?v=${jobId}`;
+
+  function copyLink() {
+    navigator.clipboard.writeText(shareUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  }
+
+  const encodedUrl = encodeURIComponent(shareUrl);
+  const encodedTitle = encodeURIComponent(`Xem video AI "${projectTitle}" được render bằng FrameFoundry!`);
+
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)",
+      display: "grid", placeItems: "center", zIndex: 1000, padding: "20px"
+    }}>
+      <div style={{
+        backgroundColor: "#132238", border: "1px solid rgba(255,255,255,0.15)",
+        borderRadius: "16px", padding: "28px", maxWidth: "480px", width: "100%",
+        boxShadow: "0 20px 50px rgba(0,0,0,0.5)"
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h2 style={{ fontSize: "20px", color: "#fff", margin: 0 }}>🔗 Chia Sẻ Video AI</h2>
+          <button onClick={onClose} style={{ color: "#a0b0a8", fontSize: "20px", cursor: "pointer" }}>✕</button>
+        </div>
+
+        <p style={{ color: "#94a3b8", fontSize: "14px", marginBottom: "16px" }}>
+          Chia sẻ liên kết này với bất kỳ ai để họ có thể xem trực tuyến và tải video <strong>"{projectTitle}"</strong> mà không cần đăng nhập.
+        </p>
+
+        <div style={{ display: "flex", gap: "8px", marginBottom: "20px" }}>
+          <input
+            type="text"
+            readOnly
+            value={shareUrl}
+            style={{ flex: 1, backgroundColor: "#1b2e4b", color: "#fff", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "8px", padding: "10px 12px", fontSize: "13px" }}
+          />
+          <button
+            onClick={copyLink}
+            style={{
+              backgroundColor: copied ? "#10b981" : "#3b82f6", color: "#fff", border: "none",
+              borderRadius: "8px", padding: "10px 16px", fontWeight: "bold", fontSize: "13px", cursor: "pointer", transition: "all 0.2s"
+            }}
+          >
+            {copied ? "✓ Đã Chép" : "📋 Sao Chép"}
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+          <a
+            href={`mailto:?subject=${encodedTitle}&body=Hãy xem video AI tôi vừa tạo: ${encodedUrl}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ textAlign: "center", backgroundColor: "#1b2e4b", color: "#fff", padding: "10px", borderRadius: "8px", textDecoration: "none", fontSize: "13px", fontWeight: 600 }}
+          >
+            ✉️ Email
+          </a>
+          <a
+            href={`https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ textAlign: "center", backgroundColor: "#1877f2", color: "#fff", padding: "10px", borderRadius: "8px", textDecoration: "none", fontSize: "13px", fontWeight: 600 }}
+          >
+            📱 Facebook
+          </a>
+          <a
+            href={`https://zalo.me/share?url=${encodedUrl}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ textAlign: "center", backgroundColor: "#0068ff", color: "#fff", padding: "10px", borderRadius: "8px", textDecoration: "none", fontSize: "13px", fontWeight: 600 }}
+          >
+            💬 Zalo
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type PublicVideo = {
+  id: string;
+  project_title: string;
+  project_topic?: string;
+  creator_name: string;
+  download_url: string;
+  completed_at: string;
+};
+
+function PublicVideoViewer({ jobId }: { jobId: string }) {
+  const [video, setVideo] = useState<PublicVideo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch(`/api/public/videos/${jobId}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("VIDEO_NOT_FOUND");
+        return res.json();
+      })
+      .then((data) => setVideo(data.video))
+      .catch(() => setError("Video không tồn tại hoặc đã bị gỡ."))
+      .finally(() => setLoading(false));
+  }, [jobId]);
+
+  return (
+    <div style={{ minHeight: "100vh", backgroundColor: "#0b1320", color: "#fff", display: "flex", flexDirection: "column" }}>
+      <header className="topbar">
+        <div className="brand"><span>Frame</span>Foundry AI</div>
+        <a href="/" style={{ color: "#3b82f6", textDecoration: "none", fontWeight: 600, fontSize: "14px" }}>
+          🎬 Mở Studio Tạo Video AI ➔
+        </a>
+      </header>
+
+      <main style={{ flex: 1, display: "grid", placeItems: "center", padding: "32px 20px" }}>
+        {loading ? (
+          <div style={{ color: "#94a3b8" }}>Đang tải video...</div>
+        ) : error ? (
+          <div style={{ textAlign: "center" }}>
+            <span style={{ fontSize: "48px" }}>🎬</span>
+            <h2 style={{ margin: "16px 0 8px" }}>{error}</h2>
+            <a href="/" style={{ color: "#ff6b4a" }}>Quay về trang chủ</a>
+          </div>
+        ) : video && (
+          <div style={{ maxWidth: "720px", width: "100%", backgroundColor: "#132238", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px", padding: "24px", boxShadow: "0 20px 40px rgba(0,0,0,0.4)" }}>
+            <div style={{ marginBottom: "16px" }}>
+              <span className="eyebrow" style={{ color: "#3b82f6" }}>Video AI Được Chia Sẻ</span>
+              <h1 style={{ fontSize: "24px", margin: "4px 0 6px" }}>{video.project_title}</h1>
+              <p style={{ color: "#94a3b8", fontSize: "14px", margin: 0 }}>
+                Tạo bởi <strong>{video.creator_name}</strong> · {video.project_topic || "Magic Hour AI Studio"}
+              </p>
+            </div>
+
+            {video.download_url && (
+              <video
+                src={video.download_url}
+                controls
+                autoPlay
+                style={{ width: "100%", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.1)", backgroundColor: "#000", marginBottom: "20px" }}
+              />
+            )}
+
+            <div style={{ display: "flex", gap: "12px" }}>
+              {video.download_url && (
+                <a
+                  href={video.download_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ flex: 1, textAlign: "center", backgroundColor: "#ff6b4a", color: "#fff", padding: "12px", borderRadius: "8px", textDecoration: "none", fontWeight: 700, fontSize: "15px" }}
+                >
+                  ▶ Tải Video MP4 Về Máy
+                </a>
+              )}
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.href);
+                  alert("Đã sao chép liên kết chia sẻ video!");
+                }}
+                style={{ backgroundColor: "#1b2e4b", color: "#fff", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "8px", padding: "12px 20px", fontWeight: 600, fontSize: "14px", cursor: "pointer" }}
+              >
+                📋 Sao Chép Link
+              </button>
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 }

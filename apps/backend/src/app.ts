@@ -284,6 +284,23 @@ export function createApp() {
     res.json({ videos });
   }));
 
+  // PUBLIC VIDEO SHARING ENDPOINT
+  app.get("/api/public/videos/:jobId", asyncRoute(async (req, res) => {
+    const result = await query(
+      `SELECT r.id, r.status, r.output_key, r.created_at, r.completed_at, p.title as project_title, p.topic as project_topic, u.display_name as creator_name
+       FROM render_jobs r
+       JOIN projects p ON r.project_id = p.id
+       JOIN users u ON r.user_id = u.id
+       WHERE r.id = $1 AND r.status = 'COMPLETED'`,
+      [req.params.jobId]
+    );
+    const video = result.rows[0];
+    if (!video) return res.status(404).json({ error: "VIDEO_NOT_FOUND" });
+
+    const download_url = video.output_key ? await createDownloadUrl(video.output_key) : null;
+    res.json({ video: { ...video, download_url } });
+  }));
+
   // ADMIN DASHBOARD ENDPOINTS
   app.get("/api/admin/stats", requireAuth, requireAdmin, asyncRoute(async (_req, res) => {
     const userCount = await query("SELECT COUNT(*) FROM users");
