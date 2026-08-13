@@ -6,7 +6,7 @@ import express, { NextFunction, Request, Response } from "express";
 import helmet from "helmet";
 import Redis from "ioredis";
 import { z } from "zod";
-import { AuthRequest, requireAuth, requireWorker, signToken } from "./auth";
+import { AuthRequest, requireAdmin, requireAuth, requireWorker, signToken } from "./auth";
 import { config } from "./config";
 import { pool, query, transaction } from "./db";
 import { publishRenderJob } from "./queue";
@@ -282,6 +282,73 @@ export function createApp() {
       }))
     );
     res.json({ videos });
+  }));
+
+  // ADMIN DASHBOARD ENDPOINTS
+  app.get("/api/admin/stats", requireAuth, requireAdmin, asyncRoute(async (_req, res) => {
+    const userCount = await query("SELECT COUNT(*) FROM users");
+    const projectCount = await query("SELECT COUNT(*) FROM projects");
+    const completedJobCount = await query("SELECT COUNT(*) FROM render_jobs WHERE status = 'COMPLETED'");
+    const creditsUsed = await query("SELECT ABS(COALESCE(SUM(credits), 0)) as total FROM transactions WHERE kind = 'RENDER_DEBIT'");
+
+    res.json({
+      stats: {
+        totalUsers: parseInt(userCount.rows[0].count, 10),
+        totalProjects: parseInt(projectCount.rows[0].count, 10),
+        completedVideos: parseInt(completedJobCount.rows[0].count, 10),
+        totalCreditsUsed: parseInt(creditsUsed.rows[0].total, 10),
+      },
+    });
+  }));
+
+  app.get("/api/admin/users", requireAuth, requireAdmin, asyncRoute(async (_req, res) => {
+    const result = await query(
+      "SELECT id, email, display_name, role, credits, created_at FROM users ORDER BY created_at DESC"
+    );
+    res.json({ users: result.rows });
+  }));
+
+  app.post("/api/admin/users/:userId/credits", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+    const { amount, description } = req.body;
+    const creditAmount = parseInt(amount, 10);
+    if (isNaN(creditAmount)) return res.status(400).json({ error: "INVALID_AMOUNT" });
+
+    const updatedUser = await transaction(async (client) => {
+      const uRes = await client.query(
+        "UPDATE users SET credits = credits + $2 WHERE id = $1 RETURNING id, email, display_name, role, credits",
+        [req.params.userId, creditAmount]
+      );
+      if (!uRes.rows[0]) throw Object.assign(new Error("USER_NOT_FOUND"), { status: 404 });
+      await client.query(
+        "INSERT INTO transactions(user_id, kind, credits, description) VALUES ($1, 'ADMIN_GRANT', $2, $3)",
+        [req.params.userId, creditAmount, description || "Admin cấp credit"]
+      );
+      return uRes.rows[0];
+    });
+    res.json({ user: updatedUser });
+  }));
+
+  app.post("/api/admin/users/:userId/role", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+    const { role } = req.body;
+    if (!["USER", "ADMIN"].includes(role)) return res.status(400).json({ error: "INVALID_ROLE" });
+
+    const result = await query(
+      "UPDATE users SET role = $2 WHERE id = $1 RETURNING id, email, display_name, role, credits",
+      [req.params.userId, role]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "USER_NOT_FOUND" });
+    res.json({ user: result.rows[0] });
+  }));
+
+  app.get("/api/admin/jobs", requireAuth, requireAdmin, asyncRoute(async (_req, res) => {
+    const result = await query(
+      `SELECT r.*, u.email as user_email, u.display_name as user_name, p.title as project_title 
+       FROM render_jobs r
+       JOIN users u ON r.user_id = u.id
+       JOIN projects p ON r.project_id = p.id
+       ORDER BY r.created_at DESC LIMIT 50`
+    );
+    res.json({ jobs: result.rows });
   }));
 
   app.get("/api/jobs/:jobId/events", requireAuth, asyncRoute(async (req: AuthRequest, res) => {

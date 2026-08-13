@@ -24,7 +24,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [notice, setNotice] = useState("");
-  const [currentTab, setCurrentTab] = useState<"studio" | "library">("studio");
+  const [currentTab, setCurrentTab] = useState<"studio" | "library" | "admin">("studio");
 
   const loadProjects = useCallback(async () => {
     if (!token) return;
@@ -91,9 +91,22 @@ export default function App() {
             >
               📁 Thư Viện Video AI
             </button>
+            {user.role === "ADMIN" && (
+              <button
+                onClick={() => setCurrentTab("admin")}
+                style={{
+                  background: currentTab === "admin" ? "#4285f4" : "transparent",
+                  color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px",
+                  fontWeight: 600, cursor: "pointer"
+                }}
+              >
+                🛡️ Quản Trị (Admin)
+              </button>
+            )}
           </nav>
         </div>
         <div className="account-strip">
+          {user.role === "ADMIN" && <span style={{ backgroundColor: "#4285f4", color: "#fff", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold" }}>ADMIN</span>}
           <span className="credit-pill">{user.credits} credits</span>
           <span>{user.display_name}</span>
           <button className="text-button" onClick={logout}>Đăng xuất</button>
@@ -102,6 +115,8 @@ export default function App() {
 
       {currentTab === "library" ? (
         <RenderedLibrary token={token} />
+      ) : currentTab === "admin" ? (
+        <AdminDashboard token={token} />
       ) : (
         <main className="workspace">
           <aside className="project-rail">
@@ -559,6 +574,227 @@ function RenderedLibrary({ token }: { token: string }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+type AdminStats = {
+  totalUsers: number;
+  totalProjects: number;
+  completedVideos: number;
+  totalCreditsUsed: number;
+};
+
+type AdminUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+  credits: number;
+  created_at: string;
+};
+
+type AdminJob = {
+  id: string;
+  user_email: string;
+  user_name: string;
+  project_title: string;
+  status: string;
+  progress: number;
+  stage: string;
+  created_at: string;
+};
+
+function AdminDashboard({ token }: { token: string }) {
+  const [stats, setStats] = useState<AdminStats | null>(null);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [jobs, setJobs] = useState<AdminJob[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState("");
+
+  const loadAdminData = useCallback(async () => {
+    try {
+      const [sRes, uRes, jRes] = await Promise.all([
+        api<{ stats: AdminStats }>("/api/admin/stats", {}, token),
+        api<{ users: AdminUser[] }>("/api/admin/users", {}, token),
+        api<{ jobs: AdminJob[] }>("/api/admin/jobs", {}, token),
+      ]);
+      setStats(sRes.stats);
+      setUsers(uRes.users);
+      setJobs(jRes.jobs);
+    } catch (err) {
+      console.error(err);
+      setNotice("Không thể tải dữ liệu Admin");
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    void loadAdminData();
+  }, [loadAdminData]);
+
+  async function adjustCredits(userId: string, currentCredits: number) {
+    const input = prompt(`Cấp thêm hoặc trừ Credit cho người dùng (${currentCredits} credits):`, "10");
+    if (!input) return;
+    const amount = parseInt(input, 10);
+    if (isNaN(amount)) return alert("Số lượng credit không hợp lệ");
+    try {
+      await api(`/api/admin/users/${userId}/credits`, {
+        method: "POST",
+        body: JSON.stringify({ amount, description: "Admin điều chỉnh credit" }),
+      }, token);
+      await loadAdminData();
+      setNotice("Đã cập nhật Credit thành công!");
+    } catch (err) { alert(errorText(err)); }
+  }
+
+  async function toggleRole(userId: string, currentRole: string) {
+    const newRole = currentRole === "ADMIN" ? "USER" : "ADMIN";
+    if (!confirm(`Bạn có chắc muốn đổi vai trò người dùng này sang ${newRole}?`)) return;
+    try {
+      await api(`/api/admin/users/${userId}/role`, {
+        method: "POST",
+        body: JSON.stringify({ role: newRole }),
+      }, token);
+      await loadAdminData();
+      setNotice("Đã cập nhật vai trò thành công!");
+    } catch (err) { alert(errorText(err)); }
+  }
+
+  if (loading) {
+    return <div style={{ padding: "40px", textAlign: "center", color: "#a0b0a8" }}>Đang tải bảng quản trị Admin...</div>;
+  }
+
+  return (
+    <div style={{ padding: "32px", maxWidth: "1200px", margin: "0 auto" }}>
+      {notice && <div className="notice" style={{ marginBottom: "16px" }} onClick={() => setNotice("")}>{notice}</div>}
+      
+      <div style={{ marginBottom: "28px" }}>
+        <span className="eyebrow" style={{ color: "#4285f4" }}>Trang Quản Trị Hệ Thống</span>
+        <h1 style={{ fontSize: "28px", marginTop: "4px" }}>Bảng Điều Khiển Admin</h1>
+      </div>
+
+      {/* OVERVIEW STATS CARDS */}
+      {stats && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px", marginBottom: "36px" }}>
+          <div style={{ backgroundColor: "#162822", border: "1px solid rgba(66,133,244,0.3)", borderRadius: "10px", padding: "20px" }}>
+            <span style={{ fontSize: "12px", color: "#a0b0a8" }}>Tổng Số Người Dùng</span>
+            <h2 style={{ fontSize: "32px", color: "#4285f4", margin: "8px 0 0 0" }}>{stats.totalUsers}</h2>
+          </div>
+          <div style={{ backgroundColor: "#162822", border: "1px solid rgba(255,107,74,0.3)", borderRadius: "10px", padding: "20px" }}>
+            <span style={{ fontSize: "12px", color: "#a0b0a8" }}>Tổng Số Dự Án Video</span>
+            <h2 style={{ fontSize: "32px", color: "#ff6b4a", margin: "8px 0 0 0" }}>{stats.totalProjects}</h2>
+          </div>
+          <div style={{ backgroundColor: "#162822", border: "1px solid rgba(52,168,83,0.3)", borderRadius: "10px", padding: "20px" }}>
+            <span style={{ fontSize: "12px", color: "#a0b0a8" }}>Video Đã Render Xong</span>
+            <h2 style={{ fontSize: "32px", color: "#34a853", margin: "8px 0 0 0" }}>{stats.completedVideos}</h2>
+          </div>
+          <div style={{ backgroundColor: "#162822", border: "1px solid rgba(251,188,5,0.3)", borderRadius: "10px", padding: "20px" }}>
+            <span style={{ fontSize: "12px", color: "#a0b0a8" }}>Credits Đã Đào Tiêu Phí</span>
+            <h2 style={{ fontSize: "32px", color: "#fbbc05", margin: "8px 0 0 0" }}>{stats.totalCreditsUsed}</h2>
+          </div>
+        </div>
+      )}
+
+      {/* USER MANAGEMENT SECTION */}
+      <section style={{ marginBottom: "40px" }}>
+        <h2 style={{ fontSize: "20px", marginBottom: "16px", color: "#fff" }}>Danh Sách Người Dùng ({users.length})</h2>
+        <div style={{ overflowX: "auto", backgroundColor: "#162822", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "14px" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", color: "#a0b0a8" }}>
+                <th style={{ padding: "12px 16px" }}>Tên / Email</th>
+                <th style={{ padding: "12px 16px" }}>Vai trò</th>
+                <th style={{ padding: "12px 16px" }}>Credits</th>
+                <th style={{ padding: "12px 16px" }}>Ngày tạo</th>
+                <th style={{ padding: "12px 16px", textAlign: "right" }}>Hành động</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <td style={{ padding: "12px 16px" }}>
+                    <strong style={{ color: "#fff", display: "block" }}>{u.display_name}</strong>
+                    <small style={{ color: "#8aa095" }}>{u.email}</small>
+                  </td>
+                  <td style={{ padding: "12px 16px" }}>
+                    <span style={{
+                      backgroundColor: u.role === "ADMIN" ? "rgba(66,133,244,0.2)" : "rgba(255,255,255,0.08)",
+                      color: u.role === "ADMIN" ? "#4285f4" : "#a0b0a8",
+                      padding: "3px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold"
+                    }}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td style={{ padding: "12px 16px" }}>
+                    <strong style={{ color: "#ff6b4a" }}>{u.credits}</strong> credits
+                  </td>
+                  <td style={{ padding: "12px 16px", color: "#8aa095", fontSize: "12px" }}>
+                    {new Date(u.created_at).toLocaleString("vi-VN")}
+                  </td>
+                  <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                    <button
+                      onClick={() => adjustCredits(u.id, u.credits)}
+                      style={{ backgroundColor: "#2b4c3f", color: "#fff", border: "none", padding: "6px 12px", borderRadius: "4px", cursor: "pointer", marginRight: "8px", fontSize: "12px" }}
+                    >
+                      ＋/－ Credits
+                    </button>
+                    <button
+                      onClick={() => toggleRole(u.id, u.role)}
+                      style={{ backgroundColor: "transparent", color: "#4285f4", border: "1px solid #4285f4", padding: "5px 10px", borderRadius: "4px", cursor: "pointer", fontSize: "12px" }}
+                    >
+                      Đổi Vai Trò
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* RENDER JOBS MONITOR */}
+      <section>
+        <h2 style={{ fontSize: "20px", marginBottom: "16px", color: "#fff" }}>Tiến Trình Render Gần Đây ({jobs.length})</h2>
+        <div style={{ overflowX: "auto", backgroundColor: "#162822", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "14px" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", color: "#a0b0a8" }}>
+                <th style={{ padding: "12px 16px" }}>Tên Dự Án</th>
+                <th style={{ padding: "12px 16px" }}>Người Yêu Cầu</th>
+                <th style={{ padding: "12px 16px" }}>Trạng Thái</th>
+                <th style={{ padding: "12px 16px" }}>Tiến Độ</th>
+                <th style={{ padding: "12px 16px" }}>Thời Gian</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.map((j) => (
+                <tr key={j.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <td style={{ padding: "12px 16px", color: "#fff", fontWeight: 600 }}>{j.project_title}</td>
+                  <td style={{ padding: "12px 16px" }}>
+                    <span style={{ color: "#fff" }}>{j.user_name}</span><br />
+                    <small style={{ color: "#8aa095" }}>{j.user_email}</small>
+                  </td>
+                  <td style={{ padding: "12px 16px" }}>
+                    <span style={{
+                      backgroundColor: j.status === "COMPLETED" ? "rgba(52,168,83,0.2)" : j.status === "FAILED" ? "rgba(234,67,53,0.2)" : "rgba(251,188,5,0.2)",
+                      color: j.status === "COMPLETED" ? "#34a853" : j.status === "FAILED" ? "#ea4335" : "#fbbc05",
+                      padding: "3px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold"
+                    }}>
+                      {j.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: "12px 16px", color: "#fff" }}>{j.progress}%</td>
+                  <td style={{ padding: "12px 16px", color: "#8aa095", fontSize: "12px" }}>
+                    {new Date(j.created_at).toLocaleString("vi-VN")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }
