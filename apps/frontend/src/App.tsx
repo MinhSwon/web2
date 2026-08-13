@@ -132,7 +132,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
     if (g?.accounts?.id) {
       try {
         g.accounts.id.initialize({
-          client_id: "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+          client_id: "1045439359942-cbacnii8usnh58vjdkpnoat38gpta2hn.apps.googleusercontent.com",
           callback: async (response: any) => {
             if (!response.credential) return;
             setBusy(true); setError("");
