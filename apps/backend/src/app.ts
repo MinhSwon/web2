@@ -10,6 +10,7 @@ import { config } from "./config";
 import { pool, query, transaction } from "./db";
 import { publishRenderJob } from "./queue";
 import { createDownloadUrl, createUploadUrl } from "./storage";
+import { sendVideoReadyEmail } from "./email";
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 const asyncRoute = (fn: (req: any, res: Response, next: NextFunction) => Promise<unknown>) =>
@@ -100,6 +101,33 @@ export function createApp() {
     }
     const token = signToken({ id: user.id, email: user.email, role: user.role });
     res.json({ token, user: { id: user.id, email: user.email, display_name: user.display_name, role: user.role, credits: user.credits } });
+  }));
+
+  app.post("/api/auth/google", asyncRoute(async (req, res) => {
+    const { email, displayName } = req.body;
+    if (!email || typeof email !== "string") {
+      return res.status(400).json({ error: "INVALID_EMAIL" });
+    }
+    const cleanEmail = email.toLowerCase().trim();
+    const name = displayName || cleanEmail.split("@")[0];
+    
+    let result = await query<{ id: string; email: string; display_name: string; role: string; credits: number }>(
+      "SELECT id, email, display_name, role, credits FROM users WHERE email = $1",
+      [cleanEmail]
+    );
+    let user = result.rows[0];
+    if (!user) {
+      const dummyHash = await bcrypt.hash(crypto.randomUUID(), 10);
+      const inserted = await query<{ id: string; email: string; display_name: string; role: string; credits: number }>(
+        `INSERT INTO users(email, password_hash, display_name, credits)
+         VALUES ($1, $2, $3, 10)
+         RETURNING id, email, display_name, role, credits`,
+        [cleanEmail, dummyHash, name]
+      );
+      user = inserted.rows[0];
+    }
+    const token = signToken({ id: user.id, email: user.email, role: user.role });
+    res.json({ token, user });
   }));
 
   app.get("/api/auth/me", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
@@ -269,6 +297,22 @@ export function createApp() {
       return updated.rows[0];
     });
     await redis.publish(`job:${job.id}`, JSON.stringify(job));
+    if (job.status === "COMPLETED" && job.output_key) {
+      void (async () => {
+        try {
+          const userRes = await query<{ email: string }>("SELECT email FROM users WHERE id = $1", [job.user_id]);
+          const projectRes = await query<{ title: string }>("SELECT title FROM projects WHERE id = $1", [job.project_id]);
+          const userEmail = userRes.rows[0]?.email;
+          const projectTitle = projectRes.rows[0]?.title || "Dự án AI Video";
+          if (userEmail) {
+            const dlUrl = await createDownloadUrl(job.output_key);
+            await sendVideoReadyEmail(userEmail, projectTitle, dlUrl);
+          }
+        } catch (err) {
+          console.error("Failed to send video ready email:", err);
+        }
+      })();
+    }
     res.json({ job });
   }));
 

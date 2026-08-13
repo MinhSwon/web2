@@ -15,6 +15,11 @@ const schema = z.object({
   MINIO_SECRET_KEY: z.string().default("minioadmin123"),
   MINIO_BUCKET: z.string().default("saas-video"),
   FRONTEND_ORIGIN: z.string().default("http://localhost:8080"),
+  SMTP_HOST: z.string().default("smtp.gmail.com"),
+  SMTP_PORT: z.coerce.number().default(587),
+  SMTP_USER: z.string().default(""),
+  SMTP_PASS: z.string().default(""),
+  GOOGLE_CLIENT_ID: z.string().default(""),
 });
 
 export const config = schema.parse(process.env);
