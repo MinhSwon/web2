@@ -211,6 +211,39 @@ export function createApp() {
     res.status(201).json({ asset: result.rows[0] });
   }));
 
+  // DELETE ASSET API
+  app.delete("/api/projects/:projectId/assets/:assetId", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const project = await query("SELECT id FROM projects WHERE id = $1 AND user_id = $2", [req.params.projectId, req.user!.id]);
+    if (!project.rows[0]) return res.status(404).json({ error: "PROJECT_NOT_FOUND" });
+
+    await query("DELETE FROM project_assets WHERE id = $1 AND project_id = $2", [req.params.assetId, req.params.projectId]);
+    await query("UPDATE projects SET updated_at = now() WHERE id = $1", [req.params.projectId]);
+    res.json({ ok: true });
+  }));
+
+  // REORDER ASSETS API
+  app.post("/api/projects/:projectId/assets/reorder", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const { assetIds } = req.body;
+    if (!Array.isArray(assetIds)) return res.status(400).json({ error: "INVALID_ASSET_IDS" });
+
+    const project = await query("SELECT id FROM projects WHERE id = $1 AND user_id = $2", [req.params.projectId, req.user!.id]);
+    if (!project.rows[0]) return res.status(404).json({ error: "PROJECT_NOT_FOUND" });
+
+    for (let i = 0; i < assetIds.length; i++) {
+      await query("UPDATE project_assets SET sequence_order = $1 WHERE id = $2 AND project_id = $3", [i, assetIds[i], req.params.projectId]);
+    }
+    res.json({ ok: true });
+  }));
+
+  // USER TRANSACTIONS HISTORY API
+  app.get("/api/auth/transactions", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const result = await query(
+      "SELECT id, kind, credits, description, created_at FROM transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50",
+      [req.user!.id]
+    );
+    res.json({ transactions: result.rows });
+  }));
+
   app.post("/api/projects/:projectId/render", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
     const input = renderSchema.parse(req.body);
     const idempotencyKey = req.header("idempotency-key") ?? crypto.randomUUID();

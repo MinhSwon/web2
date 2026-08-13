@@ -26,6 +26,7 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [currentTab, setCurrentTab] = useState<"studio" | "library" | "admin">("studio");
   const [shareTarget, setShareTarget] = useState<{ jobId: string; title: string } | null>(null);
+  const [showTransactions, setShowTransactions] = useState(false);
 
   const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const sharedJobId = searchParams.get("v");
@@ -115,7 +116,14 @@ export default function App() {
         </div>
         <div className="account-strip">
           {user.role === "ADMIN" && <span style={{ backgroundColor: "#4285f4", color: "#fff", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold" }}>ADMIN</span>}
-          <span className="credit-pill">{user.credits} credits</span>
+          <span
+            className="credit-pill"
+            style={{ cursor: "pointer", transition: "transform 0.2s" }}
+            title="Bấm để xem lịch sử nạp/dùng credit"
+            onClick={() => setShowTransactions(true)}
+          >
+            💳 {user.credits} credits
+          </span>
           <span>{user.display_name}</span>
           <button className="text-button" onClick={logout}>Đăng xuất</button>
         </div>
@@ -177,6 +185,13 @@ export default function App() {
           jobId={shareTarget.jobId}
           projectTitle={shareTarget.title}
           onClose={() => setShareTarget(null)}
+        />
+      )}
+
+      {showTransactions && (
+        <TransactionsModal
+          token={token}
+          onClose={() => setShowTransactions(false)}
         />
       )}
     </div>
@@ -415,6 +430,30 @@ function ProjectEditor({ token, detail, onChanged, onError, onShare }: {
     } catch (error) { onError(error); } finally { setRendering(false); }
   }
 
+  async function deleteAsset(assetId: string) {
+    if (!confirm("Xóa ảnh này khỏi dự án?")) return;
+    try {
+      await api(`/api/projects/${detail.project.id}/assets/${assetId}`, { method: "DELETE" }, token);
+      await onChanged();
+    } catch (error) { onError(error); }
+  }
+
+  async function moveAsset(index: number, direction: number) {
+    const newAssets = [...detail.assets];
+    const targetIndex = index + direction;
+    if (targetIndex < 0 || targetIndex >= newAssets.length) return;
+    const [moved] = newAssets.splice(index, 1);
+    newAssets.splice(targetIndex, 0, moved);
+    const assetIds = newAssets.map((a) => a.id);
+    try {
+      await api(`/api/projects/${detail.project.id}/assets/reorder`, {
+        method: "POST",
+        body: JSON.stringify({ assetIds }),
+      }, token);
+      await onChanged();
+    } catch (error) { onError(error); }
+  }
+
   async function download() {
     if (!job) return;
     try {
@@ -441,7 +480,15 @@ function ProjectEditor({ token, detail, onChanged, onError, onShare }: {
             <small>JPG, PNG, WEBP · tối đa 25 MB mỗi ảnh</small>
           </label>
           <div className="asset-list">
-            {detail.assets.map((asset, index) => <div className="asset-chip" key={asset.id}><span>{String(index + 1).padStart(2, "0")}</span><strong>{asset.file_name}</strong><small>{Math.ceil(asset.size_bytes / 1024)} KB</small></div>)}
+            {detail.assets.map((asset, index) => (
+              <div className="asset-chip" key={asset.id} style={{ display: "grid", gridTemplateColumns: "2rem 1fr auto auto auto", gap: "8px", alignItems: "center" }}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{asset.file_name}</strong>
+                <button type="button" onClick={() => moveAsset(index, -1)} disabled={index === 0} style={{ color: "#fff", background: "rgba(255,255,255,0.1)", borderRadius: "4px", padding: "3px 8px", opacity: index === 0 ? 0.3 : 1 }}>⬆</button>
+                <button type="button" onClick={() => moveAsset(index, 1)} disabled={index === detail.assets.length - 1} style={{ color: "#fff", background: "rgba(255,255,255,0.1)", borderRadius: "4px", padding: "3px 8px", opacity: index === detail.assets.length - 1 ? 0.3 : 1 }}>⬇</button>
+                <button type="button" onClick={() => deleteAsset(asset.id)} style={{ color: "#ef4444", background: "rgba(239,68,68,0.15)", borderRadius: "4px", padding: "3px 8px" }}>🗑️</button>
+              </div>
+            ))}
           </div>
         </section>
       </div>
@@ -450,7 +497,16 @@ function ProjectEditor({ token, detail, onChanged, onError, onShare }: {
         <form onSubmit={render}>
           <div className="section-title"><div><span className="step-number">02</span><h2>Đạo diễn</h2></div></div>
           <label>Chủ đề<input name="topic" defaultValue={detail.project.topic || "Storytelling"} /></label>
-          <label>Giọng đọc<select name="voice" defaultValue="vi-VN-HoaiMyNeural"><option>vi-VN-HoaiMyNeural</option><option>vi-VN-NamMinhNeural</option><option>en-US-JennyNeural</option></select></label>
+          <label>Giọng đọc (Voice AI)
+            <select name="voice" defaultValue="vi-VN-HoaiMyNeural">
+              <option value="vi-VN-HoaiMyNeural">🇻🇳 vi-VN - Nữ (Hoài Mỹ)</option>
+              <option value="vi-VN-NamMinhNeural">🇻🇳 vi-VN - Nam (Nam Minh)</option>
+              <option value="en-US-JennyNeural">🇺🇸 en-US - Nữ (Jenny)</option>
+              <option value="en-US-GuyNeural">🇺🇸 en-US - Nam (Guy)</option>
+              <option value="ja-JP-NanamiNeural">🇯🇵 ja-JP - Nữ (Nanami)</option>
+              <option value="ko-KR-SunHiNeural">🇰🇷 ko-KR - Nữ (SunHi)</option>
+            </select>
+          </label>
           <div className="control-row">
             <label>Giây / ảnh<input name="imageDuration" type="number" min="1" max="10" defaultValue="3" /></label>
             <label>Độ phân giải<select name="resolution" defaultValue="720p"><option>720p</option><option>1080p</option></select></label>
@@ -1006,6 +1062,75 @@ function PublicVideoViewer({ jobId }: { jobId: string }) {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+type TransactionRecord = {
+  id: string;
+  kind: string;
+  credits: number;
+  description: string;
+  created_at: string;
+};
+
+function TransactionsModal({ token, onClose }: { token: string; onClose: () => void }) {
+  const [items, setItems] = useState<TransactionRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api<{ transactions: TransactionRecord[] }>("/api/auth/transactions", {}, token)
+      .then((data) => setItems(data.transactions))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: "rgba(0,0,0,0.75)", backdropFilter: "blur(8px)",
+      display: "grid", placeItems: "center", zIndex: 1000, padding: "20px"
+    }}>
+      <div style={{
+        backgroundColor: "#132238", border: "1px solid rgba(255,255,255,0.15)",
+        borderRadius: "16px", padding: "28px", maxWidth: "560px", width: "100%",
+        maxHeight: "80vh", display: "flex", flexDirection: "column",
+        boxShadow: "0 20px 50px rgba(0,0,0,0.5)"
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h2 style={{ fontSize: "20px", color: "#fff", margin: 0 }}>💳 Lịch Sử Giao Dịch Credit</h2>
+          <button onClick={onClose} style={{ color: "#a0b0a8", fontSize: "20px", cursor: "pointer" }}>✕</button>
+        </div>
+
+        {loading ? (
+          <div style={{ padding: "30px", textAlign: "center", color: "#94a3b8" }}>Đang tải lịch sử giao dịch...</div>
+        ) : (
+          <div style={{ overflowY: "auto", flex: 1 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "13px" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", color: "#94a3b8" }}>
+                  <th style={{ padding: "10px" }}>Nội dung</th>
+                  <th style={{ padding: "10px" }}>Credits</th>
+                  <th style={{ padding: "10px", textAlign: "right" }}>Thời gian</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((t) => (
+                  <tr key={t.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={{ padding: "10px", color: "#fff" }}>{t.description || t.kind}</td>
+                    <td style={{ padding: "10px", fontWeight: "bold", color: t.credits > 0 ? "#10b981" : "#ff6b4a" }}>
+                      {t.credits > 0 ? `+${t.credits}` : t.credits}
+                    </td>
+                    <td style={{ padding: "10px", textAlign: "right", color: "#94a3b8", fontSize: "11px" }}>
+                      {new Date(t.created_at).toLocaleString("vi-VN")}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
