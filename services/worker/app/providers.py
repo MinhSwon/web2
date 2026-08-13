@@ -102,62 +102,23 @@ async def generate_script(topic: str, image_paths: list[Path] = None) -> str:
 
 
 async def synthesize_speech(text: str, voice: str, output: Path) -> bool:
-    if settings.tts_provider in ("google", "gtts"):
-        try:
-            from gtts import gTTS
-            tts = gTTS(text=text, lang="vi")
-            tts.save(str(output))
-            return output.exists() and output.stat().st_size > 0
-        except Exception:
-            return False
-
-    if settings.tts_provider == "openai" and settings.openai_api_key:
-        valid_voices = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
-        selected_voice = voice.lower() if voice.lower() in valid_voices else "nova"
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                response = await client.post(
-                    "https://api.openai.com/v1/audio/speech",
-                    headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                    json={
-                        "model": "tts-1",
-                        "input": text,
-                        "voice": selected_voice,
-                    },
-                )
-                response.raise_for_status()
-                output.write_bytes(response.content)
-                return output.stat().st_size > 0
-        except Exception:
-            return False
-
-    if settings.tts_provider == "elevenlabs" and settings.elevenlabs_api_key:
-        try:
-            async with httpx.AsyncClient(timeout=60) as client:
-                response = await client.post(
-                    f"https://api.elevenlabs.io/v1/text-to-speech/{settings.elevenlabs_voice_id}",
-                    headers={
-                        "xi-api-key": settings.elevenlabs_api_key,
-                        "Accept": "audio/mpeg",
-                    },
-                    json={
-                        "text": text,
-                        "model_id": "eleven_multilingual_v2",
-                        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
-                    },
-                )
-                response.raise_for_status()
-                output.write_bytes(response.content)
-                return output.stat().st_size > 0
-        except Exception:
-            return False
-    if settings.tts_provider != "edge":
-        return False
+    # 1. Try Edge TTS
     try:
-        communicator = edge_tts.Communicate(text, voice)
+        communicator = edge_tts.Communicate(text, voice or "vi-VN-HoaiMyNeural")
         await communicator.save(str(output))
+        if output.exists() and output.stat().st_size > 0:
+            return True
+    except Exception as e:
+        print(f"Edge TTS notice: {e}, attempting gTTS fallback...")
+
+    # 2. Fallback to gTTS
+    try:
+        from gtts import gTTS
+        tts = gTTS(text=text, lang="vi")
+        await asyncio.to_thread(tts.save, str(output))
         return output.exists() and output.stat().st_size > 0
-    except Exception:
+    except Exception as e:
+        print(f"gTTS error: {e}")
         return False
 
 

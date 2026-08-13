@@ -144,8 +144,9 @@ class VideoPipeline:
         captions_str = str(captions).replace("\\", "/").replace(":", "\\:")
         await run_command([
             "ffmpeg", "-y", "-i", str(video), "-i", str(audio),
-            "-vf", f"subtitles='{captions_str}':force_style='FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2'",
-            "-c:v", "libx264", "-c:a", "aac", "-shortest", "-movflags", "+faststart", str(output),
+            "-filter_complex", f"[0:v]subtitles='{captions_str}':force_style='FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2'[v]",
+            "-map", "[v]", "-map", "1:a:0",
+            "-c:v", "libx264", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
         ])
 
 
