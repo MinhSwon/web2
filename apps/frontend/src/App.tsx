@@ -171,9 +171,39 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
 
   async function googleLogin() {
     const g = (window as any).google;
-    if (g?.accounts?.id) {
-      g.accounts.id.prompt();
+    const clientId = "1045439359942-cbacnii8usnh58vjdkpnoat38gpta2hn.apps.googleusercontent.com";
+
+    if (g?.accounts?.oauth2) {
+      const client = g.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+        callback: async (tokenResponse: any) => {
+          if (tokenResponse.access_token) {
+            setBusy(true); setError("");
+            try {
+              const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+                headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+              });
+              const profile = await res.json();
+              if (profile.email) {
+                const data = await api<{ token: string; user: User }>("/api/auth/google", {
+                  method: "POST",
+                  body: JSON.stringify({ email: profile.email, displayName: profile.name || profile.given_name }),
+                });
+                onAuthenticated(data.token, data.user);
+              }
+            } catch (err) { setError(errorText(err)); } finally { setBusy(false); }
+          }
+        },
+      });
+      client.requestAccessToken();
+      return;
     }
+
+    // Direct OAuth 2.0 popup window fallback
+    const scope = encodeURIComponent("https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile");
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(window.location.origin)}&response_type=token&scope=${scope}`;
+    window.location.href = authUrl;
   }
 
   return (
@@ -192,7 +222,38 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
           <span className="eyebrow">Bắt đầu</span>
           <h2>{mode === "register" ? "Mở studio của bạn" : "Trở lại studio"}</h2>
           
-          <div id="google-gsi-btn" style={{ marginBottom: "16px", display: "flex", justifyContent: "center", minHeight: "44px" }}></div>
+          <button
+            type="button"
+            className="secondary-button google-auth-btn"
+            onClick={googleLogin}
+            disabled={busy}
+            style={{
+              width: "100%",
+              padding: "14px",
+              marginBottom: "16px",
+              backgroundColor: "#4285F4",
+              color: "#ffffff",
+              border: "none",
+              borderRadius: "8px",
+              fontWeight: 600,
+              fontSize: "15px",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "12px",
+              boxShadow: "0 2px 4px rgba(0,0,0,0.2)"
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" style={{ backgroundColor: "#fff", borderRadius: "4px", padding: "2px" }}>
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+            </svg>
+            Đăng nhập bằng Gmail (Google Sign-In)
+          </button>
+          
           <div style={{ textAlign: "center", margin: "10px 0", color: "#888", fontSize: "12px" }}>— HOẶC BẰNG EMAIL —</div>
 
           {mode === "register" && <label>Tên hiển thị<input name="displayName" required minLength={2} placeholder="Nguyễn An" /></label>}
