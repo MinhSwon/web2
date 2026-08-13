@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.venv-worker
+.e2e
+node_modules
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+tài liệu
+

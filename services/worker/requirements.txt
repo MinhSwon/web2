@@ -1,0 +1,12 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+aio-pika==9.5.7
+httpx==0.28.1
+minio==7.2.16
+edge-tts==7.2.1
+gtts==2.5.4
+gradio_client
+pydantic==2.11.7
+pytest==8.4.1
+
+

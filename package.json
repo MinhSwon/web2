@@ -1,0 +1,19 @@
+{
+  "name": "saas-video-platform",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/backend",
+    "apps/frontend"
+  ],
+  "scripts": {
+    "build": "npm run build -w @saas-video/backend && npm run build -w @saas-video/frontend",
+    "test": "npm run test -w @saas-video/backend",
+    "dev:backend": "npm run dev -w @saas-video/backend",
+    "dev:frontend": "npm run dev -w @saas-video/frontend"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
+

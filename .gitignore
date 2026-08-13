@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.vite/
+coverage/
+__pycache__/
+.pytest_cache/
+.venv-worker/
+.e2e/
+*.pyc
+*.log
+.DS_Store
+tmp/
