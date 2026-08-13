@@ -24,6 +24,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [notice, setNotice] = useState("");
+  const [currentTab, setCurrentTab] = useState<"studio" | "library">("studio");
 
   const loadProjects = useCallback(async () => {
     if (!token) return;
@@ -67,7 +68,31 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand"><span>Frame</span>Foundry</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
+          <div className="brand"><span>Frame</span>Foundry</div>
+          <nav style={{ display: "flex", gap: "10px" }}>
+            <button
+              onClick={() => setCurrentTab("studio")}
+              style={{
+                background: currentTab === "studio" ? "#ff6b4a" : "transparent",
+                color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px",
+                fontWeight: 600, cursor: "pointer"
+              }}
+            >
+              🎬 Studio Dự Án
+            </button>
+            <button
+              onClick={() => setCurrentTab("library")}
+              style={{
+                background: currentTab === "library" ? "#ff6b4a" : "transparent",
+                color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px",
+                fontWeight: 600, cursor: "pointer"
+              }}
+            >
+              📁 Thư Viện Video AI
+            </button>
+          </nav>
+        </div>
         <div className="account-strip">
           <span className="credit-pill">{user.credits} credits</span>
           <span>{user.display_name}</span>
@@ -75,49 +100,53 @@ export default function App() {
         </div>
       </header>
 
-      <main className="workspace">
-        <aside className="project-rail">
-          <div className="rail-heading">
-            <div><span className="eyebrow">Studio</span><h2>Dự án</h2></div>
-            <span className="project-count">{projects.length}</span>
-          </div>
-          <CreateProject token={token} onCreated={async (project) => {
-            await loadProjects();
-            setSelectedId(project.id);
-          }} />
-          <div className="project-list">
-            {projects.map((project, index) => (
-              <button
-                className={`project-card ${selectedId === project.id ? "active" : ""}`}
-                key={project.id}
-                onClick={() => setSelectedId(project.id)}
-                style={{ animationDelay: `${index * 70}ms` }}
-              >
-                <span className="project-index">{String(index + 1).padStart(2, "0")}</span>
-                <strong>{project.title}</strong>
-                <small>{project.asset_count ?? 0} ảnh · {project.latest_job?.status ?? "DRAFT"}</small>
-              </button>
-            ))}
-          </div>
-        </aside>
+      {currentTab === "library" ? (
+        <RenderedLibrary token={token} />
+      ) : (
+        <main className="workspace">
+          <aside className="project-rail">
+            <div className="rail-heading">
+              <div><span className="eyebrow">Studio</span><h2>Dự án</h2></div>
+              <span className="project-count">{projects.length}</span>
+            </div>
+            <CreateProject token={token} onCreated={async (project) => {
+              await loadProjects();
+              setSelectedId(project.id);
+            }} />
+            <div className="project-list">
+              {projects.map((project, index) => (
+                <button
+                  className={`project-card ${selectedId === project.id ? "active" : ""}`}
+                  key={project.id}
+                  onClick={() => setSelectedId(project.id)}
+                  style={{ animationDelay: `${index * 70}ms` }}
+                >
+                  <span className="project-index">{String(index + 1).padStart(2, "0")}</span>
+                  <strong>{project.title}</strong>
+                  <small>{project.asset_count ?? 0} ảnh · {project.latest_job?.status ?? "DRAFT"}</small>
+                </button>
+              ))}
+            </div>
+          </aside>
 
-        <section className="editor-stage">
-          {notice && <button className="notice" onClick={() => setNotice("")}>{notice}</button>}
-          {!detail ? <EmptyState /> : (
-            <ProjectEditor
-              key={detail.project.id}
-              token={token}
-              detail={detail}
-              onChanged={async () => {
-                await Promise.all([loadDetail(detail.project.id), loadProjects()]);
-                const me = await api<{ user: User }>("/api/auth/me", {}, token);
-                setUser(me.user);
-              }}
-              onError={(error) => setNotice(errorText(error))}
-            />
-          )}
-        </section>
-      </main>
+          <section className="editor-stage">
+            {notice && <button className="notice" onClick={() => setNotice("")}>{notice}</button>}
+            {!detail ? <EmptyState /> : (
+              <ProjectEditor
+                key={detail.project.id}
+                token={token}
+                detail={detail}
+                onChanged={async () => {
+                  await Promise.all([loadDetail(detail.project.id), loadProjects()]);
+                  const me = await api<{ user: User }>("/api/auth/me", {}, token);
+                  setUser(me.user);
+                }}
+                onError={(error) => setNotice(errorText(error))}
+              />
+            )}
+          </section>
+        </main>
+      )}
     </div>
   );
 }
@@ -427,6 +456,107 @@ function JobProgress({ job, onDownload }: { job?: Job; onDownload: () => void })
             />
           )}
           <button type="button" className="download-button" onClick={onDownload}>Tải video MP4</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type RenderedVideo = {
+  id: string;
+  project_id: string;
+  project_title: string;
+  project_topic?: string;
+  completed_at: string;
+  download_url: string;
+};
+
+function RenderedLibrary({ token }: { token: string }) {
+  const [videos, setVideos] = useState<RenderedVideo[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api<{ videos: RenderedVideo[] }>("/api/rendered-videos", {}, token)
+      .then((data) => setVideos(data.videos))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  if (loading) {
+    return <div style={{ padding: "40px", textAlign: "center", color: "#a0b0a8" }}>Đang tải thư viện video...</div>;
+  }
+
+  return (
+    <div style={{ padding: "32px", maxWidth: "1200px", margin: "0 auto" }}>
+      <div style={{ marginBottom: "24px" }}>
+        <span className="eyebrow">Kho Lưu Trữ</span>
+        <h1 style={{ fontSize: "28px", marginTop: "4px" }}>Thư Viện Video AI Đã Render ({videos.length})</h1>
+        <p style={{ color: "#a0b0a8" }}>Tất cả video thành phẩm được tạo bởi Magic Hour AI kèm kịch bản, giọng đọc & phụ đề.</p>
+      </div>
+
+      {videos.length === 0 ? (
+        <div className="empty-state" style={{ margin: "40px 0" }}>
+          <span>🎬</span>
+          <h2>Chưa có video nào trong kho</h2>
+          <p>Hãy sang tab "Studio Dự Án" và bấm Render video đầu tiên của bạn.</p>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: "24px" }}>
+          {videos.map((video) => (
+            <div
+              key={video.id}
+              style={{
+                backgroundColor: "#162822",
+                border: "1px solid rgba(255,255,255,0.1)",
+                borderRadius: "12px",
+                padding: "16px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "12px"
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <strong style={{ fontSize: "16px", color: "#fff", display: "block" }}>{video.project_title}</strong>
+                  <small style={{ color: "#8aa095" }}>{video.project_topic || "Chưa có chủ đề"}</small>
+                </div>
+                <span style={{ fontSize: "11px", backgroundColor: "rgba(255,107,74,0.2)", color: "#ff6b4a", padding: "4px 8px", borderRadius: "4px" }}>
+                  {new Date(video.completed_at).toLocaleDateString("vi-VN")}
+                </span>
+              </div>
+
+              {video.download_url && (
+                <video
+                  src={video.download_url}
+                  controls
+                  style={{ width: "100%", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.1)", backgroundColor: "#000" }}
+                />
+              )}
+
+              <div style={{ display: "flex", gap: "8px", marginTop: "auto" }}>
+                {video.download_url && (
+                  <a
+                    href={video.download_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      flex: 1,
+                      textAlign: "center",
+                      backgroundColor: "#ff6b4a",
+                      color: "#fff",
+                      padding: "10px",
+                      borderRadius: "6px",
+                      textDecoration: "none",
+                      fontWeight: 600,
+                      fontSize: "14px"
+                    }}
+                  >
+                    ▶ Tải Video MP4
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

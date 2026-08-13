@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
 import helmet from "helmet";
@@ -263,6 +264,24 @@ export function createApp() {
     if (!job) return res.status(404).json({ error: "JOB_NOT_FOUND" });
     const downloadUrl = job.output_key ? await createDownloadUrl(job.output_key) : null;
     res.json({ job: { ...job, download_url: downloadUrl } });
+  }));
+
+  app.get("/api/rendered-videos", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const result = await query(
+      `SELECT r.*, p.title as project_title, p.topic as project_topic 
+       FROM render_jobs r
+       JOIN projects p ON r.project_id = p.id
+       WHERE r.user_id = $1 AND r.status = 'COMPLETED'
+       ORDER BY r.completed_at DESC`,
+      [req.user!.id]
+    );
+    const videos = await Promise.all(
+      result.rows.map(async (row) => ({
+        ...row,
+        download_url: row.output_key ? await createDownloadUrl(row.output_key) : null,
+      }))
+    );
+    res.json({ videos });
   }));
 
   app.get("/api/jobs/:jobId/events", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
