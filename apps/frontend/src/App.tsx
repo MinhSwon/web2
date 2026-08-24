@@ -732,23 +732,42 @@ type AdminJob = {
   created_at: string;
 };
 
+type AdminPromoCode = {
+  id: string;
+  code: string;
+  credits_reward: number;
+  max_uses: number;
+  used_count: number;
+  expires_at: string | null;
+  is_active: boolean;
+  created_at: string;
+};
+
 function AdminDashboard({ token }: { token: string }) {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [jobs, setJobs] = useState<AdminJob[]>([]);
+  const [promoCodes, setPromoCodes] = useState<AdminPromoCode[]>([]);
+  const [newPromoCode, setNewPromoCode] = useState("");
+  const [newPromoCredits, setNewPromoCredits] = useState(20);
+  const [newPromoMaxUses, setNewPromoMaxUses] = useState(100);
+  const [newPromoDays, setNewPromoDays] = useState(30);
+  const [creatingPromo, setCreatingPromo] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState("");
 
   const loadAdminData = useCallback(async () => {
     try {
-      const [sRes, uRes, jRes] = await Promise.all([
+      const [sRes, uRes, jRes, pRes] = await Promise.all([
         api<{ stats: AdminStats }>("/api/admin/stats", {}, token),
         api<{ users: AdminUser[] }>("/api/admin/users", {}, token),
         api<{ jobs: AdminJob[] }>("/api/admin/jobs", {}, token),
+        api<{ promoCodes: AdminPromoCode[] }>("/api/admin/promo-codes", {}, token),
       ]);
       setStats(sRes.stats);
       setUsers(uRes.users);
       setJobs(jRes.jobs);
+      setPromoCodes(pRes.promoCodes || []);
     } catch (err) {
       console.error(err);
       setNotice("Không thể tải dữ liệu Admin");
@@ -760,6 +779,47 @@ function AdminDashboard({ token }: { token: string }) {
   useEffect(() => {
     void loadAdminData();
   }, [loadAdminData]);
+
+  async function handleCreatePromoCode(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newPromoCode.trim()) return;
+    setCreatingPromo(true);
+    try {
+      await api("/api/admin/promo-codes", {
+        method: "POST",
+        body: JSON.stringify({
+          code: newPromoCode,
+          creditsReward: newPromoCredits,
+          maxUses: newPromoMaxUses,
+          expiresInDays: newPromoDays,
+        }),
+      }, token);
+      setNewPromoCode("");
+      await loadAdminData();
+      setNotice("Tạo mã khuyến mãi mới thành công!");
+    } catch (err) {
+      alert(errorText(err));
+    } finally {
+      setCreatingPromo(false);
+    }
+  }
+
+  async function togglePromoCode(id: string) {
+    try {
+      await api(`/api/admin/promo-codes/${id}/toggle`, { method: "PATCH" }, token);
+      await loadAdminData();
+      setNotice("Đã cập nhật trạng thái mã khuyến mãi!");
+    } catch (err) { alert(errorText(err)); }
+  }
+
+  async function deletePromoCode(id: string, code: string) {
+    if (!confirm(`Bạn có chắc muốn xóa mã khuyến mãi ${code}?`)) return;
+    try {
+      await api(`/api/admin/promo-codes/${id}`, { method: "DELETE" }, token);
+      await loadAdminData();
+      setNotice("Đã xóa mã khuyến mãi!");
+    } catch (err) { alert(errorText(err)); }
+  }
 
   async function adjustCredits(userId: string, currentCredits: number) {
     const input = prompt(`Cấp thêm hoặc trừ Credit cho người dùng (${currentCredits} credits):`, "10");
@@ -876,6 +936,162 @@ function AdminDashboard({ token }: { token: string }) {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* PROMO CODES MANAGER */}
+      <section style={{ marginBottom: "36px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h2 style={{ fontSize: "20px", color: "#fff", margin: 0 }}>🏷️ Quản Lý Mã Khuyến Mãi (Promo Codes) ({promoCodes.length})</h2>
+        </div>
+
+        {/* CREATE PROMO CODE FORM */}
+        <form onSubmit={handleCreatePromoCode} style={{
+          backgroundColor: "#162822",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: "10px",
+          padding: "20px",
+          marginBottom: "20px",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr)) auto",
+          gap: "12px",
+          alignItems: "end"
+        }}>
+          <div>
+            <label style={{ display: "block", fontSize: "12px", color: "#a0b0a8", marginBottom: "6px" }}>Mã Khuyến Mãi (Code):</label>
+            <input
+              type="text"
+              required
+              placeholder="VD: WELCOME2026"
+              value={newPromoCode}
+              onChange={(e) => setNewPromoCode(e.target.value.toUpperCase())}
+              style={{
+                width: "100%", backgroundColor: "#0f1d18", border: "1px solid rgba(255,255,255,0.2)",
+                borderRadius: "6px", padding: "8px 12px", color: "#fff", fontWeight: "bold", textTransform: "uppercase"
+              }}
+            />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: "12px", color: "#a0b0a8", marginBottom: "6px" }}>Số Credits Thưởng:</label>
+            <input
+              type="number"
+              min="1"
+              required
+              value={newPromoCredits}
+              onChange={(e) => setNewPromoCredits(parseInt(e.target.value, 10) || 1)}
+              style={{
+                width: "100%", backgroundColor: "#0f1d18", border: "1px solid rgba(255,255,255,0.2)",
+                borderRadius: "6px", padding: "8px 12px", color: "#fff"
+              }}
+            />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: "12px", color: "#a0b0a8", marginBottom: "6px" }}>Số Lượt Dùng Tối Đa:</label>
+            <input
+              type="number"
+              min="1"
+              required
+              value={newPromoMaxUses}
+              onChange={(e) => setNewPromoMaxUses(parseInt(e.target.value, 10) || 1)}
+              style={{
+                width: "100%", backgroundColor: "#0f1d18", border: "1px solid rgba(255,255,255,0.2)",
+                borderRadius: "6px", padding: "8px 12px", color: "#fff"
+              }}
+            />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: "12px", color: "#a0b0a8", marginBottom: "6px" }}>Hạn Dùng (Số Ngày):</label>
+            <input
+              type="number"
+              min="1"
+              value={newPromoDays}
+              onChange={(e) => setNewPromoDays(parseInt(e.target.value, 10) || 30)}
+              style={{
+                width: "100%", backgroundColor: "#0f1d18", border: "1px solid rgba(255,255,255,0.2)",
+                borderRadius: "6px", padding: "8px 12px", color: "#fff"
+              }}
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={creatingPromo}
+            style={{
+              backgroundColor: "#10b981", color: "#fff", border: "none",
+              borderRadius: "6px", padding: "10px 18px", fontWeight: "bold",
+              cursor: creatingPromo ? "not-allowed" : "pointer", height: "40px"
+            }}
+          >
+            {creatingPromo ? "Đang tạo..." : "＋ Tạo Mã Mới"}
+          </button>
+        </form>
+
+        {/* PROMO CODES TABLE */}
+        <div style={{ overflowX: "auto", backgroundColor: "#162822", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "14px" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", color: "#a0b0a8" }}>
+                <th style={{ padding: "12px 16px" }}>Mã Code</th>
+                <th style={{ padding: "12px 16px" }}>Thưởng Credits</th>
+                <th style={{ padding: "12px 16px" }}>Đã Dùng / Tối Đa</th>
+                <th style={{ padding: "12px 16px" }}>Hạn Sử Dụng</th>
+                <th style={{ padding: "12px 16px" }}>Trạng Thái</th>
+                <th style={{ padding: "12px 16px", textAlign: "right" }}>Thao Tác</th>
+              </tr>
+            </thead>
+            <tbody>
+              {promoCodes.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: "20px", textAlign: "center", color: "#8aa095" }}>
+                    Chưa có mã khuyến mãi nào. Hãy tạo mã đầu tiên ở trên!
+                  </td>
+                </tr>
+              ) : (
+                promoCodes.map((p) => (
+                  <tr key={p.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={{ padding: "12px 16px" }}>
+                      <strong style={{ color: "#f59e0b", letterSpacing: "1px" }}>{p.code}</strong>
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <strong style={{ color: "#10b981" }}>+{p.credits_reward}</strong> credits
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#fff" }}>
+                      {p.used_count} / {p.max_uses}
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#8aa095", fontSize: "12px" }}>
+                      {p.expires_at ? new Date(p.expires_at).toLocaleDateString("vi-VN") : "Vĩnh viễn"}
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{
+                        backgroundColor: p.is_active ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)",
+                        color: p.is_active ? "#10b981" : "#ef4444",
+                        padding: "3px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold"
+                      }}>
+                        {p.is_active ? "Hoạt Động" : "Đã Tắt"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>
+                      <button
+                        onClick={() => togglePromoCode(p.id)}
+                        style={{
+                          backgroundColor: "transparent", color: p.is_active ? "#f59e0b" : "#10b981",
+                          border: `1px solid ${p.is_active ? "#f59e0b" : "#10b981"}`,
+                          padding: "4px 8px", borderRadius: "4px", cursor: "pointer", marginRight: "6px", fontSize: "12px"
+                        }}
+                      >
+                        {p.is_active ? "Tắt" : "Bật"}
+                      </button>
+                      <button
+                        onClick={() => deletePromoCode(p.id, p.code)}
+                        style={{ backgroundColor: "rgba(239,68,68,0.2)", color: "#ef4444", border: "none", padding: "4px 8px", borderRadius: "4px", cursor: "pointer", fontSize: "12px" }}
+                      >
+                        Xóa
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -1193,6 +1409,10 @@ function TokenShopModal({
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
+  const [promoInput, setPromoInput] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
+  const [promoError, setPromoError] = useState("");
+  const [promoSuccess, setPromoSuccess] = useState("");
 
   useEffect(() => {
     api<{ packages: TokenPackage[] }>("/api/billing/packages", {}, token)
@@ -1232,6 +1452,27 @@ function TokenShopModal({
       alert(errorText(err));
     } finally {
       setPurchasing(false);
+    }
+  }
+
+  async function handleRedeemPromo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!promoInput.trim()) return;
+    setRedeeming(true);
+    setPromoError("");
+    setPromoSuccess("");
+    try {
+      const res = await api<{ success: boolean; user: User; message: string }>("/api/billing/redeem-promo", {
+        method: "POST",
+        body: JSON.stringify({ code: promoInput.trim() }),
+      }, token);
+      setPromoSuccess(res.message);
+      onPurchased(res.user);
+      setPromoInput("");
+    } catch (err: any) {
+      setPromoError(err?.message || errorText(err));
+    } finally {
+      setRedeeming(false);
     }
   }
 
@@ -1277,6 +1518,59 @@ function TokenShopModal({
           <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Đang tải bảng giá Token...</div>
         ) : (
           <>
+            {/* PROMO CODE REDEEM SECTION */}
+            <div style={{
+              backgroundColor: "#172740",
+              border: "1px solid rgba(16,185,129,0.3)",
+              borderRadius: "14px",
+              padding: "16px 20px",
+              marginBottom: "24px"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                <span style={{ fontSize: "16px" }}>🏷️</span>
+                <strong style={{ fontSize: "14px", color: "#10b981" }}>Bạn Có Mã Khuyến Mãi / Voucher?</strong>
+              </div>
+              <form onSubmit={handleRedeemPromo} style={{ display: "flex", gap: "10px" }}>
+                <input
+                  type="text"
+                  placeholder="Nhập mã (ví dụ: WELCOME2026)"
+                  value={promoInput}
+                  onChange={(e) => setPromoInput(e.target.value.toUpperCase())}
+                  style={{
+                    flex: 1,
+                    backgroundColor: "#0d1624",
+                    border: "1px solid rgba(255,255,255,0.2)",
+                    borderRadius: "8px",
+                    padding: "10px 14px",
+                    color: "#fff",
+                    fontSize: "14px",
+                    textTransform: "uppercase",
+                    fontWeight: 700,
+                    letterSpacing: "1px"
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={redeeming || !promoInput.trim()}
+                  style={{
+                    backgroundColor: "#10b981",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "10px 20px",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: redeeming || !promoInput.trim() ? "not-allowed" : "pointer",
+                    boxShadow: "0 2px 10px rgba(16,185,129,0.3)"
+                  }}
+                >
+                  {redeeming ? "Đang áp dụng..." : "Áp Dụng"}
+                </button>
+              </form>
+              {promoSuccess && <p style={{ color: "#10b981", fontSize: "13px", margin: "8px 0 0", fontWeight: 600 }}>✓ {promoSuccess}</p>}
+              {promoError && <p style={{ color: "#ef4444", fontSize: "13px", margin: "8px 0 0" }}>✕ {promoError}</p>}
+            </div>
+
             {/* PRICING GRID */}
             <div style={{
               display: "grid",

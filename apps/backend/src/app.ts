@@ -315,6 +315,58 @@ export function createApp() {
     });
   }));
 
+  // USER REDEEM PROMO CODE API
+  app.post("/api/billing/redeem-promo", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const rawCode = (req.body.code || "").toString().trim().toUpperCase();
+    if (!rawCode) return res.status(400).json({ error: "CODE_REQUIRED", message: "Vui lòng nhập mã khuyến mãi." });
+
+    const promoRes = await query(
+      `SELECT * FROM promo_codes 
+       WHERE code = $1 AND is_active = true AND (expires_at IS NULL OR expires_at > now())`,
+      [rawCode]
+    );
+    const promo = promoRes.rows[0];
+    if (!promo) {
+      return res.status(404).json({ error: "INVALID_PROMO_CODE", message: "Mã khuyến mãi không tồn tại hoặc đã hết hạn." });
+    }
+
+    if (promo.max_uses > 0 && promo.used_count >= promo.max_uses) {
+      return res.status(400).json({ error: "PROMO_LIMIT_REACHED", message: "Mã khuyến mãi đã hết lượt sử dụng." });
+    }
+
+    const alreadyRedeemed = await query(
+      "SELECT 1 FROM promo_code_redemptions WHERE promo_code_id = $1 AND user_id = $2",
+      [promo.id, req.user!.id]
+    );
+    if (alreadyRedeemed.rows[0]) {
+      return res.status(400).json({ error: "PROMO_ALREADY_USED", message: "Bạn đã sử dụng mã khuyến mãi này rồi." });
+    }
+
+    const updatedUser = await transaction(async (client) => {
+      await client.query("UPDATE promo_codes SET used_count = used_count + 1 WHERE id = $1", [promo.id]);
+      const uRes = await client.query(
+        "UPDATE users SET credits = credits + $1 WHERE id = $2 RETURNING id, email, display_name, role, credits",
+        [promo.credits_reward, req.user!.id]
+      );
+      await client.query(
+        "INSERT INTO promo_code_redemptions(promo_code_id, user_id, credits_awarded) VALUES ($1, $2, $3)",
+        [promo.id, req.user!.id, promo.credits_reward]
+      );
+      await client.query(
+        "INSERT INTO transactions(user_id, kind, credits, description) VALUES ($1, 'PROMO_REDEEM', $2, $3)",
+        [req.user!.id, promo.credits_reward, `Áp dụng mã khuyến mãi: ${promo.code} (+${promo.credits_reward} Credits)`]
+      );
+      return uRes.rows[0];
+    });
+
+    res.json({
+      success: true,
+      user: updatedUser,
+      creditsAwarded: promo.credits_reward,
+      message: `Chúc mừng! Bạn đã nhận được +${promo.credits_reward} Credits miễn phí từ mã ${promo.code}!`,
+    });
+  }));
+
   app.post("/api/projects/:projectId/render", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
     const input = renderSchema.parse(req.body);
     const idempotencyKey = req.header("idempotency-key") ?? crypto.randomUUID();
@@ -470,6 +522,52 @@ export function createApp() {
        ORDER BY r.created_at DESC LIMIT 50`
     );
     res.json({ jobs: result.rows });
+  }));
+
+  // ADMIN PROMO CODES API
+  app.get("/api/admin/promo-codes", requireAuth, requireAdmin, asyncRoute(async (_req, res) => {
+    const result = await query("SELECT * FROM promo_codes ORDER BY created_at DESC");
+    res.json({ promoCodes: result.rows });
+  }));
+
+  app.post("/api/admin/promo-codes", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+    const { code, creditsReward, maxUses, expiresInDays } = req.body;
+    const cleanCode = (code || "").toString().trim().toUpperCase();
+    if (!cleanCode) return res.status(400).json({ error: "CODE_REQUIRED", message: "Vui lòng nhập mã khuyến mãi." });
+    const reward = parseInt(creditsReward, 10);
+    if (isNaN(reward) || reward <= 0) return res.status(400).json({ error: "INVALID_CREDITS", message: "Số credits thưởng không hợp lệ." });
+    const max = parseInt(maxUses, 10) || 100;
+    const days = parseInt(expiresInDays, 10);
+    const expiresAt = days && days > 0 ? new Date(Date.now() + days * 24 * 60 * 60 * 1000) : null;
+
+    try {
+      const result = await query(
+        `INSERT INTO promo_codes (code, credits_reward, max_uses, expires_at)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [cleanCode, reward, max, expiresAt]
+      );
+      res.json({ promoCode: result.rows[0] });
+    } catch (err: any) {
+      if (err.code === "23505") {
+        return res.status(400).json({ error: "CODE_ALREADY_EXISTS", message: "Mã khuyến mãi này đã tồn tại." });
+      }
+      throw err;
+    }
+  }));
+
+  app.patch("/api/admin/promo-codes/:id/toggle", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+    const result = await query(
+      "UPDATE promo_codes SET is_active = NOT is_active WHERE id = $1 RETURNING *",
+      [req.params.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "PROMO_NOT_FOUND" });
+    res.json({ promoCode: result.rows[0] });
+  }));
+
+  app.delete("/api/admin/promo-codes/:id", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+    await query("DELETE FROM promo_codes WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
   }));
 
   app.get("/api/jobs/:jobId/events", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
