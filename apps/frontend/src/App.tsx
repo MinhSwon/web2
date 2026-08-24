@@ -764,6 +764,30 @@ type AdminOrderStats = {
   total_revenue_vnd: number;
 };
 
+const VIETNAM_BANKS = [
+  { id: "MB", name: "MB Bank (Ngân Hàng Quân Đội)" },
+  { id: "VCB", name: "Vietcombank (Ngoại Thương Việt Nam)" },
+  { id: "TCB", name: "Techcombank (Kỹ Thương Việt Nam)" },
+  { id: "VPB", name: "VPBank (Việt Nam Thịnh Vượng)" },
+  { id: "ACB", name: "ACB (Á Châu)" },
+  { id: "BIDV", name: "BIDV (Đầu Tư & Phát Triển)" },
+  { id: "ICB", name: "VietinBank (Công Thương Việt Nam)" },
+  { id: "TPB", name: "TPBank (Tiên Phong)" },
+  { id: "STB", name: "Sacombank (Sài Gòn Thương Tín)" },
+  { id: "HDB", name: "HDBank (Phát Triển TP.HCM)" },
+  { id: "VIB", name: "VIB (Quốc Tế Việt Nam)" },
+  { id: "MSB", name: "MSB (Hàng Hải)" },
+  { id: "SHB", name: "SHB (Sài Gòn - Hà Nội)" },
+  { id: "OCB", name: "OCB (Phương Đông)" },
+];
+
+type BankConfig = {
+  bank_id: string;
+  bank_name: string;
+  account_no: string;
+  account_name: string;
+};
+
 function AdminDashboard({ token }: { token: string }) {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -771,6 +795,13 @@ function AdminDashboard({ token }: { token: string }) {
   const [promoCodes, setPromoCodes] = useState<AdminPromoCode[]>([]);
   const [orders, setOrders] = useState<AdminPaymentOrder[]>([]);
   const [orderStats, setOrderStats] = useState<AdminOrderStats | null>(null);
+  const [bankConfig, setBankConfig] = useState<BankConfig>({
+    bank_id: "MB",
+    bank_name: "MB Bank (Ngân Hàng Quân Đội)",
+    account_no: "999988886666",
+    account_name: "FRAME FOUNDRY AI",
+  });
+  const [savingBank, setSavingBank] = useState(false);
   const [newPromoCode, setNewPromoCode] = useState("");
   const [newPromoCredits, setNewPromoCredits] = useState(20);
   const [newPromoMaxUses, setNewPromoMaxUses] = useState(100);
@@ -781,12 +812,13 @@ function AdminDashboard({ token }: { token: string }) {
 
   const loadAdminData = useCallback(async () => {
     try {
-      const [sRes, uRes, jRes, pRes, oRes] = await Promise.all([
+      const [sRes, uRes, jRes, pRes, oRes, bRes] = await Promise.all([
         api<{ stats: AdminStats }>("/api/admin/stats", {}, token),
         api<{ users: AdminUser[] }>("/api/admin/users", {}, token),
         api<{ jobs: AdminJob[] }>("/api/admin/jobs", {}, token),
         api<{ promoCodes: AdminPromoCode[] }>("/api/admin/promo-codes", {}, token),
         api<{ orders: AdminPaymentOrder[]; stats: AdminOrderStats }>("/api/admin/orders", {}, token),
+        api<{ bank: BankConfig }>("/api/admin/settings/bank", {}, token),
       ]);
       setStats(sRes.stats);
       setUsers(uRes.users);
@@ -794,6 +826,7 @@ function AdminDashboard({ token }: { token: string }) {
       setPromoCodes(pRes.promoCodes || []);
       setOrders(oRes.orders || []);
       setOrderStats(oRes.stats);
+      if (bRes.bank) setBankConfig(bRes.bank);
     } catch (err) {
       console.error(err);
       setNotice("Không thể tải dữ liệu Admin");
@@ -845,6 +878,30 @@ function AdminDashboard({ token }: { token: string }) {
       await loadAdminData();
       setNotice("Đã xóa mã khuyến mãi!");
     } catch (err) { alert(errorText(err)); }
+  }
+
+  async function handleSaveBankConfig(e: React.FormEvent) {
+    e.preventDefault();
+    if (!bankConfig.account_no.trim() || !bankConfig.account_name.trim()) return;
+    setSavingBank(true);
+    try {
+      const selectedBank = VIETNAM_BANKS.find((b) => b.id === bankConfig.bank_id);
+      const res = await api<{ success: boolean; bank: BankConfig; message: string }>("/api/admin/settings/bank", {
+        method: "POST",
+        body: JSON.stringify({
+          bank_id: bankConfig.bank_id,
+          bank_name: selectedBank?.name || bankConfig.bank_name,
+          account_no: bankConfig.account_no.trim(),
+          account_name: bankConfig.account_name.trim().toUpperCase(),
+        }),
+      }, token);
+      setBankConfig(res.bank);
+      setNotice("✅ " + res.message);
+    } catch (err) {
+      alert(errorText(err));
+    } finally {
+      setSavingBank(false);
+    }
   }
 
   async function adjustCredits(userId: string, currentCredits: number) {
@@ -1120,6 +1177,155 @@ function AdminDashboard({ token }: { token: string }) {
               )}
             </tbody>
           </table>
+        </div>
+      </section>
+
+      {/* BANK & VIETQR SETTINGS SECTION */}
+      <section style={{ marginBottom: "40px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h2 style={{ fontSize: "20px", color: "#fff", margin: 0 }}>🏦 Cấu Hình Tài Khoản Ngân Hàng & VietQR</h2>
+          <span style={{ fontSize: "12px", color: "#10b981", backgroundColor: "rgba(16,185,129,0.1)", padding: "4px 10px", borderRadius: "6px", border: "1px solid rgba(16,185,129,0.2)" }}>
+            ⚡ Tự động đổi mã QR toàn hệ thống ngay khi lưu
+          </span>
+        </div>
+
+        <div style={{
+          backgroundColor: "#162822",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: "14px",
+          padding: "24px",
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+          gap: "24px",
+          alignItems: "center"
+        }}>
+          <form onSubmit={handleSaveBankConfig} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "13px", color: "#a0b0a8", marginBottom: "6px" }}>
+                Ngân Hàng Thụ Hưởng:
+              </label>
+              <select
+                value={bankConfig.bank_id}
+                onChange={(e) => {
+                  const b = VIETNAM_BANKS.find((item) => item.id === e.target.value);
+                  setBankConfig({
+                    ...bankConfig,
+                    bank_id: e.target.value,
+                    bank_name: b?.name || bankConfig.bank_name,
+                  });
+                }}
+                style={{
+                  width: "100%",
+                  backgroundColor: "#0f1d18",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: "8px",
+                  padding: "10px 14px",
+                  color: "#fff",
+                  fontSize: "14px"
+                }}
+              >
+                {VIETNAM_BANKS.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({b.id})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: "13px", color: "#a0b0a8", marginBottom: "6px" }}>
+                Số Tài Khoản Ngân Hàng:
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="VD: 0987654321 hoặc 99998888..."
+                value={bankConfig.account_no}
+                onChange={(e) => setBankConfig({ ...bankConfig, account_no: e.target.value.trim() })}
+                style={{
+                  width: "100%",
+                  backgroundColor: "#0f1d18",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: "8px",
+                  padding: "10px 14px",
+                  color: "#60a5fa",
+                  fontWeight: 700,
+                  fontSize: "15px"
+                }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: "13px", color: "#a0b0a8", marginBottom: "6px" }}>
+                Tên Chủ Tài Khoản (Viết Hoa Không Dấu):
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="VD: NGUYEN VAN A hoặc CONG TY TNHH..."
+                value={bankConfig.account_name}
+                onChange={(e) => setBankConfig({ ...bankConfig, account_name: e.target.value.toUpperCase() })}
+                style={{
+                  width: "100%",
+                  backgroundColor: "#0f1d18",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: "8px",
+                  padding: "10px 14px",
+                  color: "#fff",
+                  fontWeight: 700,
+                  fontSize: "14px",
+                  textTransform: "uppercase"
+                }}
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={savingBank}
+              style={{
+                backgroundColor: "#10b981",
+                color: "#fff",
+                border: "none",
+                borderRadius: "8px",
+                padding: "12px 20px",
+                fontWeight: 700,
+                fontSize: "14px",
+                cursor: savingBank ? "not-allowed" : "pointer",
+                boxShadow: "0 4px 15px rgba(16,185,129,0.3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px"
+              }}
+            >
+              {savingBank ? "Đang lưu cấu hình..." : "💾 Lưu Cấu Hình Ngân Hàng Mới"}
+            </button>
+          </form>
+
+          {/* LIVE PREVIEW VIETQR CARD */}
+          <div style={{
+            backgroundColor: "#0f1d18",
+            border: "1px solid rgba(255,255,255,0.15)",
+            borderRadius: "12px",
+            padding: "20px",
+            textAlign: "center"
+          }}>
+            <span style={{ fontSize: "12px", color: "#f59e0b", fontWeight: 700, display: "block", marginBottom: "10px" }}>
+              🔍 Xem Trước Mã QR Tạo Ra (Live Preview)
+            </span>
+            <div style={{ backgroundColor: "#fff", padding: "12px", borderRadius: "10px", display: "inline-block", maxWidth: "210px" }}>
+              <img
+                src={`https://img.vietqr.io/image/${bankConfig.bank_id}-${bankConfig.account_no}-compact2.png?amount=50000&addInfo=DEMO&accountName=${encodeURIComponent(bankConfig.account_name)}`}
+                alt="VietQR Xem Trước"
+                style={{ width: "100%", height: "auto", display: "block" }}
+              />
+            </div>
+            <div style={{ marginTop: "12px", fontSize: "13px", color: "#cbd5e1" }}>
+              <p style={{ margin: "0 0 2px" }}><strong>{bankConfig.bank_name}</strong></p>
+              <p style={{ margin: "0 0 2px", color: "#60a5fa" }}>STK: <strong>{bankConfig.account_no}</strong></p>
+              <p style={{ margin: "0", color: "#f59e0b" }}>Chủ TK: <strong>{bankConfig.account_name}</strong></p>
+            </div>
+          </div>
         </div>
       </section>
 

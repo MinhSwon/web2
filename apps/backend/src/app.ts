@@ -14,10 +14,13 @@ import { createDownloadUrl, createUploadUrl } from "./storage";
 import { sendVideoReadyEmail } from "./email";
 import {
   buildVietQRUrl,
+  buildVietQRUrlWithBank,
   buildVNPayUrl,
   completePaymentOrder,
   generateOrderCode,
+  getBankConfig,
   PaymentOrder,
+  setBankConfig,
   verifyVNPayHash,
 } from "./payments";
 
@@ -326,7 +329,8 @@ export function createApp() {
     let momoData = null;
 
     if (chosenGateway === "VIETQR") {
-      vietqrData = buildVietQRUrl({ order_code: order.order_code, amount_vnd: order.amount_vnd });
+      const bankConfig = await getBankConfig();
+      vietqrData = buildVietQRUrlWithBank({ order_code: order.order_code, amount_vnd: order.amount_vnd }, bankConfig);
     } else if (chosenGateway === "VNPAY") {
       const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0] || req.socket.remoteAddress || "127.0.0.1";
       vnpayUrl = buildVNPayUrl({ order_code: order.order_code, amount_vnd: order.amount_vnd, package_name: order.package_name }, clientIp);
@@ -344,6 +348,11 @@ export function createApp() {
       momo: momoData,
       isSandbox: chosenGateway === "SANDBOX",
     });
+  }));
+
+  // BANK INFO PUBLIC ENDPOINT
+  app.get("/api/billing/bank-info", asyncRoute(async (_req, res) => {
+    res.json({ bank: await getBankConfig() });
   }));
 
   // ORDER STATUS POLLING API
@@ -737,6 +746,25 @@ export function createApp() {
       orders: ordersRes.rows,
       stats: statsRes.rows[0],
     });
+  }));
+
+  // ADMIN BANK SETTINGS
+  app.get("/api/admin/settings/bank", requireAuth, requireAdmin, asyncRoute(async (_req, res) => {
+    res.json({ bank: await getBankConfig() });
+  }));
+
+  app.post("/api/admin/settings/bank", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
+    const { bank_id, bank_name, account_no, account_name } = req.body;
+    if (!account_no || !account_name) {
+      return res.status(400).json({ error: "MISSING_FIELDS", message: "Vui lòng điền đủ số tài khoản và tên chủ tài khoản." });
+    }
+    const updated = await setBankConfig({
+      bank_id: bank_id || "MB",
+      bank_name: bank_name || "MB Bank",
+      account_no: account_no.toString().trim(),
+      account_name: account_name.toString().trim().toUpperCase(),
+    });
+    res.json({ success: true, bank: updated, message: "Cập nhật tài khoản ngân hàng thành công!" });
   }));
 
   app.get("/api/jobs/:jobId/events", requireAuth, asyncRoute(async (req: AuthRequest, res) => {

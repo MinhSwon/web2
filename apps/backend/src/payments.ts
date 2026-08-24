@@ -18,6 +18,49 @@ export interface PaymentOrder {
   created_at: string;
 }
 
+export interface BankConfig {
+  bank_id: string;
+  bank_name: string;
+  account_no: string;
+  account_name: string;
+}
+
+export async function getBankConfig(): Promise<BankConfig> {
+  try {
+    const res = await query("SELECT value FROM system_settings WHERE key = 'bank_config'");
+    if (res.rows[0]?.value) {
+      return res.rows[0].value as BankConfig;
+    }
+  } catch (err) {
+    console.error("Failed to read bank_config from DB:", err);
+  }
+  return {
+    bank_id: config.VIETQR_BANK_ID || "MB",
+    bank_name: "MB Bank (Ngân Hàng Quân Đội)",
+    account_no: config.VIETQR_ACCOUNT_NO || "999988886666",
+    account_name: config.VIETQR_ACCOUNT_NAME || "FRAME FOUNDRY AI",
+  };
+}
+
+export async function setBankConfig(bankConfig: Partial<BankConfig>): Promise<BankConfig> {
+  const current = await getBankConfig();
+  const updated: BankConfig = {
+    bank_id: bankConfig.bank_id || current.bank_id,
+    bank_name: bankConfig.bank_name || current.bank_name,
+    account_no: bankConfig.account_no || current.account_no,
+    account_name: (bankConfig.account_name || current.account_name).toUpperCase(),
+  };
+
+  await query(
+    `INSERT INTO system_settings (key, value, updated_at)
+     VALUES ('bank_config', $1, now())
+     ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
+    [JSON.stringify(updated)]
+  );
+
+  return updated;
+}
+
 export function generateOrderCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let random = "";
@@ -27,28 +70,51 @@ export function generateOrderCode(): string {
   return `FF${random}`;
 }
 
-export function buildVietQRUrl(order: { order_code: string; amount_vnd: number }): {
+export function buildVietQRUrlWithBank(
+  order: { order_code: string; amount_vnd: number },
+  bank: BankConfig
+): {
   qrUrl: string;
   bankId: string;
+  bankName: string;
   accountNo: string;
   accountName: string;
   memo: string;
   amount: number;
 } {
-  const bankId = config.VIETQR_BANK_ID;
-  const accountNo = config.VIETQR_ACCOUNT_NO;
-  const accountName = config.VIETQR_ACCOUNT_NAME;
+  const bankId = bank.bank_id;
+  const bankName = bank.bank_name;
+  const accountNo = bank.account_no;
+  const accountName = bank.account_name;
   const memo = order.order_code;
   const qrUrl = `https://img.vietqr.io/image/${bankId}-${accountNo}-compact2.png?amount=${order.amount_vnd}&addInfo=${encodeURIComponent(memo)}&accountName=${encodeURIComponent(accountName)}`;
 
   return {
     qrUrl,
     bankId,
+    bankName,
     accountNo,
     accountName,
     memo,
     amount: order.amount_vnd,
   };
+}
+
+export function buildVietQRUrl(order: { order_code: string; amount_vnd: number }): {
+  qrUrl: string;
+  bankId: string;
+  bankName: string;
+  accountNo: string;
+  accountName: string;
+  memo: string;
+  amount: number;
+} {
+  return buildVietQRUrlWithBank(order, {
+    bank_id: config.VIETQR_BANK_ID || "MB",
+    bank_name: "MB Bank (Ngân Hàng Quân Đội)",
+    account_no: config.VIETQR_ACCOUNT_NO || "999988886666",
+    account_name: config.VIETQR_ACCOUNT_NAME || "FRAME FOUNDRY AI",
+  });
 }
 
 export function buildVNPayUrl(order: { order_code: string; amount_vnd: number; package_name: string }, ipAddr: string): string {
