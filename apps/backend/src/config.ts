@@ -20,6 +20,16 @@ const schema = z.object({
   SMTP_USER: z.string().default(""),
   SMTP_PASS: z.string().default(""),
   GOOGLE_CLIENT_ID: z.string().default(""),
+  VIETQR_BANK_ID: z.string().default("MB"),
+  VIETQR_ACCOUNT_NO: z.string().default("999988886666"),
+  VIETQR_ACCOUNT_NAME: z.string().default("FRAME FOUNDRY AI"),
+  SEPAY_API_KEY: z.string().default(""),
+  VNPAY_TMN_CODE: z.string().default("SANDBOX01"),
+  VNPAY_HASH_SECRET: z.string().default("SANDBOXSECRETKEY1234567890ABCDEF"),
+  VNPAY_URL: z.string().default("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html"),
+  MOMO_PARTNER_CODE: z.string().default("MOMO_SANDBOX"),
+  MOMO_ACCESS_KEY: z.string().default("sandbox_access_key"),
+  MOMO_SECRET_KEY: z.string().default("sandbox_secret_key"),
 });
 
 export const config = schema.parse(process.env);

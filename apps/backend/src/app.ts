@@ -12,6 +12,14 @@ import { pool, query, transaction } from "./db";
 import { publishRenderJob } from "./queue";
 import { createDownloadUrl, createUploadUrl } from "./storage";
 import { sendVideoReadyEmail } from "./email";
+import {
+  buildVietQRUrl,
+  buildVNPayUrl,
+  completePaymentOrder,
+  generateOrderCode,
+  PaymentOrder,
+  verifyVNPayHash,
+} from "./payments";
 
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 const asyncRoute = (fn: (req: any, res: Response, next: NextFunction) => Promise<unknown>) =>
@@ -282,6 +290,145 @@ export function createApp() {
 
   app.get("/api/billing/packages", requireAuth, asyncRoute(async (_req, res) => {
     res.json({ packages: TOKEN_PACKAGES });
+  }));
+
+  // CREATE PAYMENT ORDER API
+  app.post("/api/billing/create-order", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const { packageId, gateway = "VIETQR" } = req.body;
+    const selectedPackage = TOKEN_PACKAGES.find((p) => p.id === packageId);
+    if (!selectedPackage) {
+      return res.status(400).json({ error: "INVALID_PACKAGE", message: "Gói Token không hợp lệ." });
+    }
+
+    const validGateways = ["VIETQR", "VNPAY", "MOMO", "SANDBOX"];
+    const chosenGateway = validGateways.includes(gateway) ? gateway : "VIETQR";
+    const orderCode = generateOrderCode();
+
+    const orderResult = await query(
+      `INSERT INTO payment_orders (user_id, order_code, package_id, package_name, credits, amount_vnd, gateway, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING')
+       RETURNING *`,
+      [
+        req.user!.id,
+        orderCode,
+        selectedPackage.id,
+        selectedPackage.name,
+        selectedPackage.credits,
+        selectedPackage.priceVnd,
+        chosenGateway,
+      ]
+    );
+    const order = orderResult.rows[0] as unknown as PaymentOrder;
+
+    // Generate gateway-specific response
+    let vietqrData = null;
+    let vnpayUrl = null;
+    let momoData = null;
+
+    if (chosenGateway === "VIETQR") {
+      vietqrData = buildVietQRUrl({ order_code: order.order_code, amount_vnd: order.amount_vnd });
+    } else if (chosenGateway === "VNPAY") {
+      const clientIp = (req.headers["x-forwarded-for"] as string)?.split(",")[0] || req.socket.remoteAddress || "127.0.0.1";
+      vnpayUrl = buildVNPayUrl({ order_code: order.order_code, amount_vnd: order.amount_vnd, package_name: order.package_name }, clientIp);
+    } else if (chosenGateway === "MOMO") {
+      momoData = {
+        payUrl: `https://test-payment.momo.vn/v2/gateway/pay?orderId=${order.order_code}`,
+        qrCodeUrl: `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=momo://pay?orderId=${order.order_code}&amount=${order.amount_vnd}`,
+      };
+    }
+
+    res.json({
+      order,
+      vietqr: vietqrData,
+      vnpayUrl,
+      momo: momoData,
+      isSandbox: chosenGateway === "SANDBOX",
+    });
+  }));
+
+  // ORDER STATUS POLLING API
+  app.get("/api/billing/orders/:orderCode/status", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const orderCode = Array.isArray(req.params.orderCode) ? req.params.orderCode[0] : req.params.orderCode;
+    const orderRes = await query(
+      "SELECT * FROM payment_orders WHERE order_code = $1 AND user_id = $2",
+      [orderCode, req.user!.id]
+    );
+    const order = orderRes.rows[0] as unknown as PaymentOrder;
+    if (!order) return res.status(404).json({ error: "ORDER_NOT_FOUND" });
+
+    let updatedUser = null;
+    if (order.status === "SUCCESS") {
+      const uRes = await query("SELECT id, email, display_name, role, credits FROM users WHERE id = $1", [req.user!.id]);
+      updatedUser = uRes.rows[0];
+    }
+
+    res.json({ order, user: updatedUser });
+  }));
+
+  // SANDBOX PAYMENT INSTANT COMPLETE
+  app.post("/api/billing/orders/:orderCode/sandbox-complete", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const orderCode = Array.isArray(req.params.orderCode) ? req.params.orderCode[0] : req.params.orderCode;
+    const orderRes = await query(
+      "SELECT * FROM payment_orders WHERE order_code = $1 AND user_id = $2",
+      [orderCode, req.user!.id]
+    );
+    if (!orderRes.rows[0]) return res.status(404).json({ error: "ORDER_NOT_FOUND" });
+
+    const result = await completePaymentOrder(orderCode, "SANDBOX_SIMULATOR", "SANDBOX_1CLICK");
+    if (!result.success) return res.status(400).json({ error: result.message });
+
+    const uRes = await query("SELECT id, email, display_name, role, credits FROM users WHERE id = $1", [req.user!.id]);
+    res.json({
+      success: true,
+      order: result.order,
+      user: uRes.rows[0],
+      message: result.message,
+    });
+  }));
+
+  // UNIVERSAL PAYMENT WEBHOOK (SEPAY / CASSO / BANK BOT)
+  const webhookHandler = asyncRoute(async (req, res) => {
+    const body = req.body || {};
+    const content = (body.content || body.description || body.remark || "").toString();
+    const amountIn = parseInt(body.transferAmount || body.amount || "0", 10);
+    const referenceCode = (body.referenceCode || body.id || "").toString();
+
+    const match = content.match(/FF[A-Z0-9]{6}/i);
+    if (!match) {
+      return res.json({ success: false, message: "NO_ORDER_CODE_IN_CONTENT" });
+    }
+
+    const orderCode = match[0].toUpperCase();
+    const orderRes = await query("SELECT * FROM payment_orders WHERE order_code = $1", [orderCode]);
+    const order = orderRes.rows[0] as unknown as PaymentOrder;
+    if (!order) {
+      return res.json({ success: false, message: "ORDER_NOT_FOUND" });
+    }
+
+    if (amountIn > 0 && amountIn < order.amount_vnd) {
+      return res.status(400).json({ success: false, message: "AMOUNT_INSUFFICIENT" });
+    }
+
+    const result = await completePaymentOrder(orderCode, referenceCode, "VIETQR_AUTO");
+    res.json({ success: true, message: result.message });
+  });
+
+  app.post("/api/webhooks/payment", webhookHandler);
+  app.post("/api/webhooks/sepay", webhookHandler);
+
+  // VNPAY RETURN CALLBACK API
+  app.get("/api/billing/vnpay-return", asyncRoute(async (req, res) => {
+    const queryParams = req.query as Record<string, string>;
+    const isValid = verifyVNPayHash(queryParams);
+    const orderCode = queryParams.vnp_TxnRef;
+    const responseCode = queryParams.vnp_ResponseCode;
+
+    if (isValid && responseCode === "00" && orderCode) {
+      await completePaymentOrder(orderCode, queryParams.vnp_TransactionNo, "VNPAY");
+      return res.redirect(`${config.FRONTEND_ORIGIN}/?payment=success&orderCode=${orderCode}`);
+    }
+
+    return res.redirect(`${config.FRONTEND_ORIGIN}/?payment=failed&orderCode=${orderCode}`);
   }));
 
   app.post("/api/billing/purchase", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
@@ -568,6 +715,28 @@ export function createApp() {
   app.delete("/api/admin/promo-codes/:id", requireAuth, requireAdmin, asyncRoute(async (req, res) => {
     await query("DELETE FROM promo_codes WHERE id = $1", [req.params.id]);
     res.json({ success: true });
+  }));
+
+  // ADMIN PAYMENT ORDERS API
+  app.get("/api/admin/orders", requireAuth, requireAdmin, asyncRoute(async (_req, res) => {
+    const ordersRes = await query(
+      `SELECT o.*, u.email as user_email, u.display_name as user_name
+       FROM payment_orders o
+       JOIN users u ON o.user_id = u.id
+       ORDER BY o.created_at DESC LIMIT 100`
+    );
+    const statsRes = await query(
+      `SELECT 
+        COUNT(*) as total_orders,
+        COUNT(*) FILTER (WHERE status = 'SUCCESS') as successful_orders,
+        COALESCE(SUM(amount_vnd) FILTER (WHERE status = 'SUCCESS'), 0) as total_revenue_vnd
+       FROM payment_orders`
+    );
+
+    res.json({
+      orders: ordersRes.rows,
+      stats: statsRes.rows[0],
+    });
   }));
 
   app.get("/api/jobs/:jobId/events", requireAuth, asyncRoute(async (req: AuthRequest, res) => {

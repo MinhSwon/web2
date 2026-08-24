@@ -743,11 +743,34 @@ type AdminPromoCode = {
   created_at: string;
 };
 
+type AdminPaymentOrder = {
+  id: string;
+  user_email: string;
+  user_name: string;
+  order_code: string;
+  package_name: string;
+  credits: number;
+  amount_vnd: number;
+  gateway: string;
+  status: string;
+  transaction_ref: string | null;
+  paid_at: string | null;
+  created_at: string;
+};
+
+type AdminOrderStats = {
+  total_orders: number;
+  successful_orders: number;
+  total_revenue_vnd: number;
+};
+
 function AdminDashboard({ token }: { token: string }) {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [jobs, setJobs] = useState<AdminJob[]>([]);
   const [promoCodes, setPromoCodes] = useState<AdminPromoCode[]>([]);
+  const [orders, setOrders] = useState<AdminPaymentOrder[]>([]);
+  const [orderStats, setOrderStats] = useState<AdminOrderStats | null>(null);
   const [newPromoCode, setNewPromoCode] = useState("");
   const [newPromoCredits, setNewPromoCredits] = useState(20);
   const [newPromoMaxUses, setNewPromoMaxUses] = useState(100);
@@ -758,16 +781,19 @@ function AdminDashboard({ token }: { token: string }) {
 
   const loadAdminData = useCallback(async () => {
     try {
-      const [sRes, uRes, jRes, pRes] = await Promise.all([
+      const [sRes, uRes, jRes, pRes, oRes] = await Promise.all([
         api<{ stats: AdminStats }>("/api/admin/stats", {}, token),
         api<{ users: AdminUser[] }>("/api/admin/users", {}, token),
         api<{ jobs: AdminJob[] }>("/api/admin/jobs", {}, token),
         api<{ promoCodes: AdminPromoCode[] }>("/api/admin/promo-codes", {}, token),
+        api<{ orders: AdminPaymentOrder[]; stats: AdminOrderStats }>("/api/admin/orders", {}, token),
       ]);
       setStats(sRes.stats);
       setUsers(uRes.users);
       setJobs(jRes.jobs);
       setPromoCodes(pRes.promoCodes || []);
+      setOrders(oRes.orders || []);
+      setOrderStats(oRes.stats);
     } catch (err) {
       console.error(err);
       setNotice("Không thể tải dữ liệu Admin");
@@ -1097,6 +1123,82 @@ function AdminDashboard({ token }: { token: string }) {
         </div>
       </section>
 
+      {/* PAYMENT ORDERS & REVENUE SECTION */}
+      <section style={{ marginBottom: "40px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <h2 style={{ fontSize: "20px", color: "#fff", margin: 0 }}>📊 Quản Lý Đơn Hàng & Doanh Thu ({orders.length})</h2>
+          {orderStats && (
+            <div style={{ display: "flex", gap: "12px" }}>
+              <span style={{ backgroundColor: "#1b2e4b", color: "#10b981", padding: "6px 12px", borderRadius: "6px", fontSize: "13px", fontWeight: "bold" }}>
+                Doanh thu: {Number(orderStats.total_revenue_vnd).toLocaleString("vi-VN")}₫
+              </span>
+              <span style={{ backgroundColor: "#1b2e4b", color: "#60a5fa", padding: "6px 12px", borderRadius: "6px", fontSize: "13px", fontWeight: "bold" }}>
+                Thành công: {orderStats.successful_orders}/{orderStats.total_orders} đơn
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div style={{ overflowX: "auto", backgroundColor: "#162822", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "14px" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", color: "#a0b0a8" }}>
+                <th style={{ padding: "12px 16px" }}>Mã Đơn</th>
+                <th style={{ padding: "12px 16px" }}>Khách Hàng</th>
+                <th style={{ padding: "12px 16px" }}>Gói Nạp</th>
+                <th style={{ padding: "12px 16px" }}>Số Tiền</th>
+                <th style={{ padding: "12px 16px" }}>Cổng TT</th>
+                <th style={{ padding: "12px 16px" }}>Trạng Thái</th>
+                <th style={{ padding: "12px 16px", textAlign: "right" }}>Thời Gian</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ padding: "20px", textAlign: "center", color: "#8aa095" }}>
+                    Chưa có đơn hàng thanh toán nào.
+                  </td>
+                </tr>
+              ) : (
+                orders.map((o) => (
+                  <tr key={o.id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                    <td style={{ padding: "12px 16px", color: "#f59e0b", fontWeight: 700 }}>{o.order_code}</td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ color: "#fff" }}>{o.user_name}</span><br />
+                      <small style={{ color: "#8aa095" }}>{o.user_email}</small>
+                    </td>
+                    <td style={{ padding: "12px 16px", color: "#fff" }}>
+                      <strong>{o.package_name}</strong><br />
+                      <small style={{ color: "#10b981" }}>+{o.credits} credits</small>
+                    </td>
+                    <td style={{ padding: "12px 16px", fontWeight: "bold", color: "#fff" }}>
+                      {o.amount_vnd.toLocaleString("vi-VN")}₫
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{ backgroundColor: "rgba(255,255,255,0.08)", color: "#93c5fd", padding: "2px 6px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>
+                        {o.gateway}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px" }}>
+                      <span style={{
+                        backgroundColor: o.status === "SUCCESS" ? "rgba(16,185,129,0.2)" : o.status === "FAILED" ? "rgba(239,68,68,0.2)" : "rgba(245,158,11,0.2)",
+                        color: o.status === "SUCCESS" ? "#10b981" : o.status === "FAILED" ? "#ef4444" : "#f59e0b",
+                        padding: "3px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: "bold"
+                      }}>
+                        {o.status === "SUCCESS" ? "Thành Công" : o.status === "FAILED" ? "Thất Bại" : "Chờ TT"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "12px 16px", textAlign: "right", color: "#8aa095", fontSize: "12px" }}>
+                      {new Date(o.paid_at || o.created_at).toLocaleString("vi-VN")}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {/* RENDER JOBS MONITOR */}
       <section>
         <h2 style={{ fontSize: "20px", marginBottom: "16px", color: "#fff" }}>Tiến Trình Render Gần Đây ({jobs.length})</h2>
@@ -1392,6 +1494,32 @@ type TokenPackage = {
   badge: string | null;
 };
 
+type PaymentOrderData = {
+  order: {
+    id: string;
+    order_code: string;
+    package_name: string;
+    credits: number;
+    amount_vnd: number;
+    gateway: string;
+    status: string;
+  };
+  vietqr?: {
+    qrUrl: string;
+    bankId: string;
+    accountNo: string;
+    accountName: string;
+    memo: string;
+    amount: number;
+  } | null;
+  vnpayUrl?: string | null;
+  momo?: {
+    payUrl: string;
+    qrCodeUrl: string;
+  } | null;
+  isSandbox?: boolean;
+};
+
 function TokenShopModal({
   token,
   user,
@@ -1405,14 +1533,16 @@ function TokenShopModal({
 }) {
   const [packages, setPackages] = useState<TokenPackage[]>([]);
   const [selectedPkg, setSelectedPkg] = useState<string>("pkg_pro");
-  const [paymentMethod, setPaymentMethod] = useState<"instant" | "vietqr" | "momo">("instant");
+  const [paymentMethod, setPaymentMethod] = useState<"vietqr" | "vnpay" | "momo" | "instant">("vietqr");
   const [loading, setLoading] = useState(true);
-  const [purchasing, setPurchasing] = useState(false);
+  const [creatingOrder, setCreatingOrder] = useState(false);
+  const [currentOrderData, setCurrentOrderData] = useState<PaymentOrderData | null>(null);
   const [successMsg, setSuccessMsg] = useState("");
   const [promoInput, setPromoInput] = useState("");
   const [redeeming, setRedeeming] = useState(false);
   const [promoError, setPromoError] = useState("");
   const [promoSuccess, setPromoSuccess] = useState("");
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   useEffect(() => {
     api<{ packages: TokenPackage[] }>("/api/billing/packages", {}, token)
@@ -1424,34 +1554,70 @@ function TokenShopModal({
       .finally(() => setLoading(false));
   }, [token]);
 
+  // Polling order status while an order is open
+  useEffect(() => {
+    if (!currentOrderData || currentOrderData.order.status === "SUCCESS") return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await api<{ order: { status: string; credits: number; order_code: string }; user?: User }>(
+          `/api/billing/orders/${currentOrderData.order.order_code}/status`,
+          {},
+          token
+        );
+        if (res.order.status === "SUCCESS") {
+          setSuccessMsg(`Đã nhận thanh toán thành công +${res.order.credits} Credits cho đơn ${res.order.order_code}!`);
+          if (res.user) onPurchased(res.user);
+          clearInterval(interval);
+          setTimeout(() => onClose(), 2500);
+        }
+      } catch (err) {
+        console.error("Order polling notice:", err);
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [currentOrderData, token, onPurchased, onClose]);
+
   const activePkg = packages.find((p) => p.id === selectedPkg);
 
-  async function handlePurchase() {
+  async function handleStartPayment() {
     if (!activePkg) return;
-    setPurchasing(true);
+    setCreatingOrder(true);
     try {
-      const methodLabels: Record<string, string> = {
-        instant: "Kích hoạt nhanh",
-        vietqr: "Chuyển khoản VietQR",
-        momo: "Ví MoMo",
-      };
-      const res = await api<{ success: boolean; user: User; message: string }>("/api/billing/purchase", {
+      const gatewayCode = paymentMethod === "instant" ? "SANDBOX" : paymentMethod.toUpperCase();
+      const res = await api<PaymentOrderData>("/api/billing/create-order", {
         method: "POST",
         body: JSON.stringify({
           packageId: activePkg.id,
-          paymentMethod: methodLabels[paymentMethod] || "Cổng thanh toán",
+          gateway: gatewayCode,
         }),
       }, token);
 
-      setSuccessMsg(res.message);
-      onPurchased(res.user);
-      setTimeout(() => {
-        onClose();
-      }, 1800);
+      setCurrentOrderData(res);
+
+      // If user selected instant sandbox, immediately complete it
+      if (paymentMethod === "instant") {
+        await handleCompleteSandbox(res.order.order_code);
+      }
     } catch (err) {
       alert(errorText(err));
     } finally {
-      setPurchasing(false);
+      setCreatingOrder(false);
+    }
+  }
+
+  async function handleCompleteSandbox(orderCode: string) {
+    try {
+      const res = await api<{ success: boolean; user: User; message: string }>(
+        `/api/billing/orders/${orderCode}/sandbox-complete`,
+        { method: "POST" },
+        token
+      );
+      setSuccessMsg(res.message);
+      if (res.user) onPurchased(res.user);
+      setTimeout(() => onClose(), 2000);
+    } catch (err) {
+      alert(errorText(err));
     }
   }
 
@@ -1476,10 +1642,16 @@ function TokenShopModal({
     }
   }
 
+  function copyText(text: string, key: string) {
+    navigator.clipboard.writeText(text);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
+  }
+
   return (
     <div style={{
       position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-      backgroundColor: "rgba(0,0,0,0.8)", backdropFilter: "blur(10px)",
+      backgroundColor: "rgba(0,0,0,0.85)", backdropFilter: "blur(10px)",
       display: "grid", placeItems: "center", zIndex: 1000, padding: "20px"
     }}>
       <div style={{
@@ -1491,7 +1663,7 @@ function TokenShopModal({
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px" }}>
           <div>
-            <span className="eyebrow" style={{ color: "#f59e0b" }}>💎 Cửa Hàng Credit & Token</span>
+            <span className="eyebrow" style={{ color: "#f59e0b" }}>💎 Cửa Hàng Credit & Cổng Thanh Toán</span>
             <h2 style={{ fontSize: "24px", color: "#fff", margin: "4px 0 2px" }}>Nạp Credit Render Video AI</h2>
             <p style={{ color: "#94a3b8", fontSize: "14px" }}>
               Số dư hiện tại: <strong style={{ color: "#f59e0b" }}>{user.credits} Credits</strong> · 1 Credit = 1 Lần Render Video AI hoàn chỉnh
@@ -1505,14 +1677,171 @@ function TokenShopModal({
             backgroundColor: "rgba(16, 185, 129, 0.15)",
             border: "1px solid #10b981",
             borderRadius: "12px",
-            padding: "30px",
+            padding: "32px",
             textAlign: "center",
             color: "#6ee7b7",
             margin: "20px 0"
           }}>
-            <span style={{ fontSize: "48px", display: "block", marginBottom: "12px" }}>🎉</span>
-            <h3 style={{ fontSize: "20px", color: "#fff", marginBottom: "6px" }}>Thanh Toán & Nạp Credit Thành Công!</h3>
-            <p>{successMsg}</p>
+            <span style={{ fontSize: "52px", display: "block", marginBottom: "12px" }}>🎉</span>
+            <h3 style={{ fontSize: "22px", color: "#fff", marginBottom: "8px" }}>Thanh Toán & Nạp Credit Thành Công!</h3>
+            <p style={{ fontSize: "15px" }}>{successMsg}</p>
+          </div>
+        ) : currentOrderData ? (
+          /* LIVE ACTIVE ORDER PAYMENT SCREEN */
+          <div style={{ backgroundColor: "#172740", borderRadius: "16px", padding: "24px", border: "1px solid rgba(255,255,255,0.1)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "14px", marginBottom: "20px" }}>
+              <div>
+                <span style={{ color: "#a0b0a8", fontSize: "12px" }}>Đơn hàng:</span>
+                <h3 style={{ color: "#f59e0b", fontSize: "18px", margin: "2px 0 0" }}>{currentOrderData.order.order_code}</h3>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ color: "#a0b0a8", fontSize: "12px" }}>Số tiền thanh toán:</span>
+                <h3 style={{ color: "#10b981", fontSize: "20px", margin: "2px 0 0" }}>{currentOrderData.order.amount_vnd.toLocaleString("vi-VN")}₫</h3>
+              </div>
+            </div>
+
+            {/* VIETQR GATEWAY VIEW */}
+            {currentOrderData.vietqr && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "24px", alignItems: "center" }}>
+                <div style={{ textAlign: "center", backgroundColor: "#fff", padding: "16px", borderRadius: "14px" }}>
+                  <img
+                    src={currentOrderData.vietqr.qrUrl}
+                    alt="VietQR Mã Thanh Toán"
+                    style={{ width: "100%", maxWidth: "230px", height: "auto", display: "block", margin: "0 auto" }}
+                  />
+                  <small style={{ color: "#475569", fontWeight: 700, display: "block", marginTop: "8px" }}>
+                    Quét bằng ứng dụng Ngân Hàng bất kỳ
+                  </small>
+                </div>
+
+                <div>
+                  <h4 style={{ color: "#fff", fontSize: "15px", marginBottom: "12px" }}>Thông Tin Chuyển Khoản Ngân Hàng:</h4>
+                  
+                  <div style={{ marginBottom: "10px" }}>
+                    <span style={{ color: "#94a3b8", fontSize: "12px" }}>Ngân hàng thụ hưởng:</span>
+                    <div style={{ color: "#fff", fontWeight: 700 }}>MB Bank (Ngân Hàng Quân Đội)</div>
+                  </div>
+
+                  <div style={{ marginBottom: "10px" }}>
+                    <span style={{ color: "#94a3b8", fontSize: "12px" }}>Số tài khoản:</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <strong style={{ color: "#60a5fa", fontSize: "16px" }}>{currentOrderData.vietqr.accountNo}</strong>
+                      <button
+                        type="button"
+                        onClick={() => copyText(currentOrderData.vietqr!.accountNo, "acc")}
+                        style={{ backgroundColor: "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: "4px", padding: "2px 8px", fontSize: "11px", cursor: "pointer" }}
+                      >
+                        {copiedKey === "acc" ? "✓ Đã chép" : "Sao chép"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: "10px" }}>
+                    <span style={{ color: "#94a3b8", fontSize: "12px" }}>Chủ tài khoản:</span>
+                    <div style={{ color: "#fff", fontWeight: 700 }}>{currentOrderData.vietqr.accountName}</div>
+                  </div>
+
+                  <div style={{ marginBottom: "14px" }}>
+                    <span style={{ color: "#94a3b8", fontSize: "12px" }}>Nội dung chuyển khoản (Bắt buộc chính xác):</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <strong style={{ color: "#f59e0b", fontSize: "16px", backgroundColor: "rgba(245,158,11,0.15)", padding: "2px 8px", borderRadius: "4px" }}>
+                        {currentOrderData.vietqr.memo}
+                      </strong>
+                      <button
+                        type="button"
+                        onClick={() => copyText(currentOrderData.vietqr!.memo, "memo")}
+                        style={{ backgroundColor: "rgba(255,255,255,0.1)", color: "#fff", border: "none", borderRadius: "4px", padding: "2px 8px", fontSize: "11px", cursor: "pointer" }}
+                      >
+                        {copiedKey === "memo" ? "✓ Đã chép" : "Sao chép"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#10b981", fontSize: "13px", fontWeight: 600, marginBottom: "14px" }}>
+                    <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "#10b981", animation: "pulse 1.5s infinite" }}></span>
+                    Đang tự động kiểm tra giao dịch từ ngân hàng...
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* VNPAY GATEWAY VIEW */}
+            {currentOrderData.vnpayUrl && (
+              <div style={{ textAlign: "center", padding: "20px 0" }}>
+                <p style={{ color: "#cbd5e1", marginBottom: "16px" }}>
+                  Bấm nút bên dưới để chuyển hướng đến cổng thanh toán bảo mật **VNPAY** (Hỗ trợ thẻ ATM nội địa, QR VNPAY, Visa/Mastercard):
+                </p>
+                <a
+                  href={currentOrderData.vnpayUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-block",
+                    backgroundColor: "#0066cc",
+                    color: "#fff",
+                    textDecoration: "none",
+                    padding: "14px 28px",
+                    borderRadius: "10px",
+                    fontWeight: 700,
+                    fontSize: "16px",
+                    boxShadow: "0 4px 15px rgba(0,102,204,0.4)",
+                    marginBottom: "16px"
+                  }}
+                >
+                  🚀 Mở Cổng Thanh Toán VNPay ➔
+                </a>
+              </div>
+            )}
+
+            {/* MOMO GATEWAY VIEW */}
+            {currentOrderData.momo && (
+              <div style={{ textAlign: "center", padding: "16px 0" }}>
+                <img
+                  src={currentOrderData.momo.qrCodeUrl}
+                  alt="MoMo QR"
+                  style={{ width: "180px", height: "180px", borderRadius: "12px", display: "block", margin: "0 auto 12px" }}
+                />
+                <p style={{ color: "#cbd5e1", fontSize: "14px" }}>Mở ứng dụng MoMo trên điện thoại để quét mã QR thanh toán</p>
+              </div>
+            )}
+
+            {/* ACTIONS & SANDBOX SIMULATOR */}
+            <div style={{ display: "flex", gap: "10px", marginTop: "20px", borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: "16px" }}>
+              <button
+                type="button"
+                onClick={() => setCurrentOrderData(null)}
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.08)",
+                  color: "#cbd5e1",
+                  border: "none",
+                  borderRadius: "8px",
+                  padding: "10px 16px",
+                  fontSize: "13px",
+                  cursor: "pointer"
+                }}
+              >
+                ← Quay lại chọn gói khác
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleCompleteSandbox(currentOrderData.order.order_code)}
+                style={{
+                  flex: 1,
+                  background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "8px",
+                  padding: "10px 16px",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  boxShadow: "0 2px 10px rgba(16,185,129,0.3)"
+                }}
+              >
+                ⚡ [Mô Phỏng] Tôi Đã Chuyển Khoản / Xác Nhận Thanh Toán Ngay
+              </button>
+            </div>
           </div>
         ) : loading ? (
           <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Đang tải bảng giá Token...</div>
@@ -1639,100 +1968,108 @@ function TokenShopModal({
 
             {/* PAYMENT METHOD SELECTION */}
             <div style={{ backgroundColor: "#1b2e4b", borderRadius: "14px", padding: "20px", marginBottom: "24px" }}>
-              <h4 style={{ fontSize: "14px", color: "#fff", marginBottom: "12px" }}>Chọn Phương Thức Thanh Toán:</h4>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px", marginBottom: "16px" }}>
-                <button
-                  type="button"
-                  onClick={() => setPaymentMethod("instant")}
-                  style={{
-                    backgroundColor: paymentMethod === "instant" ? "#3b82f6" : "rgba(255,255,255,0.06)",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "8px",
-                    padding: "10px",
-                    fontWeight: 600,
-                    fontSize: "13px",
-                    cursor: "pointer",
-                  }}
-                >
-                  ⚡ Nạp Nhanh (1-Click)
-                </button>
+              <h4 style={{ fontSize: "14px", color: "#fff", marginBottom: "12px" }}>Chọn Cổng Thanh Toán Điện Tử:</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "10px", marginBottom: "8px" }}>
                 <button
                   type="button"
                   onClick={() => setPaymentMethod("vietqr")}
                   style={{
-                    backgroundColor: paymentMethod === "vietqr" ? "#3b82f6" : "rgba(255,255,255,0.06)",
+                    backgroundColor: paymentMethod === "vietqr" ? "#10b981" : "rgba(255,255,255,0.06)",
                     color: "#fff",
-                    border: "none",
-                    borderRadius: "8px",
-                    padding: "10px",
-                    fontWeight: 600,
+                    border: paymentMethod === "vietqr" ? "1px solid #10b981" : "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "10px",
+                    padding: "12px",
+                    fontWeight: 700,
                     fontSize: "13px",
                     cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "4px"
                   }}
                 >
-                  🏦 Chuyển Khoản VietQR
+                  <span style={{ fontSize: "20px" }}>🏦</span>
+                  <span>VietQR Ngân Hàng</span>
+                  <small style={{ fontSize: "10px", opacity: 0.8 }}>(Tự động 24/7)</small>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("vnpay")}
+                  style={{
+                    backgroundColor: paymentMethod === "vnpay" ? "#0066cc" : "rgba(255,255,255,0.06)",
+                    color: "#fff",
+                    border: paymentMethod === "vnpay" ? "1px solid #0066cc" : "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "10px",
+                    padding: "12px",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "4px"
+                  }}
+                >
+                  <span style={{ fontSize: "20px" }}>💳</span>
+                  <span>Cổng VNPay</span>
+                  <small style={{ fontSize: "10px", opacity: 0.8 }}>(ATM / VNPAY-QR)</small>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setPaymentMethod("momo")}
                   style={{
-                    backgroundColor: paymentMethod === "momo" ? "#3b82f6" : "rgba(255,255,255,0.06)",
+                    backgroundColor: paymentMethod === "momo" ? "#d82d8b" : "rgba(255,255,255,0.06)",
                     color: "#fff",
-                    border: "none",
-                    borderRadius: "8px",
-                    padding: "10px",
-                    fontWeight: 600,
+                    border: paymentMethod === "momo" ? "1px solid #d82d8b" : "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "10px",
+                    padding: "12px",
+                    fontWeight: 700,
                     fontSize: "13px",
                     cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "4px"
                   }}
                 >
-                  📲 Ví MoMo
+                  <span style={{ fontSize: "20px" }}>📲</span>
+                  <span>Ví MoMo</span>
+                  <small style={{ fontSize: "10px", opacity: 0.8 }}>(Quét MoMo QR)</small>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("instant")}
+                  style={{
+                    backgroundColor: paymentMethod === "instant" ? "#f59e0b" : "rgba(255,255,255,0.06)",
+                    color: "#fff",
+                    border: paymentMethod === "instant" ? "1px solid #f59e0b" : "1px solid rgba(255,255,255,0.1)",
+                    borderRadius: "10px",
+                    padding: "12px",
+                    fontWeight: 700,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: "4px"
+                  }}
+                >
+                  <span style={{ fontSize: "20px" }}>⚡</span>
+                  <span>Sandbox 1-Click</span>
+                  <small style={{ fontSize: "10px", opacity: 0.8 }}>(Thử nghiệm nhanh)</small>
                 </button>
               </div>
-
-              {paymentMethod === "vietqr" && activePkg && (
-                <div style={{
-                  backgroundColor: "rgba(0,0,0,0.25)",
-                  borderRadius: "10px",
-                  padding: "16px",
-                  display: "flex",
-                  gap: "16px",
-                  alignItems: "center",
-                  fontSize: "13px",
-                  color: "#cbd5e1"
-                }}>
-                  <div style={{
-                    width: "100px",
-                    height: "100px",
-                    backgroundColor: "#fff",
-                    borderRadius: "8px",
-                    display: "grid",
-                    placeItems: "center",
-                    color: "#000",
-                    fontWeight: "bold",
-                    textAlign: "center",
-                    padding: "6px",
-                    fontSize: "11px",
-                  }}>
-                    <span>[MÃ VIETQR DỰ ÁN]</span>
-                  </div>
-                  <div>
-                    <p style={{ margin: "0 0 4px" }}>Ngân hàng: <strong>MB BANK / TECHCOMBANK</strong></p>
-                    <p style={{ margin: "0 0 4px" }}>Số tài khoản: <strong>999988886666</strong></p>
-                    <p style={{ margin: "0 0 4px" }}>Chủ tài khoản: <strong>FRAME FOUNDRY AI</strong></p>
-                    <p style={{ margin: "0" }}>Nội dung: <strong>NAP {user.id.slice(0, 8).toUpperCase()}</strong></p>
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* ACTION BUTTON */}
             {activePkg && (
               <button
                 type="button"
-                onClick={handlePurchase}
-                disabled={purchasing}
+                onClick={handleStartPayment}
+                disabled={creatingOrder}
                 style={{
                   width: "100%",
                   background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
@@ -1742,7 +2079,7 @@ function TokenShopModal({
                   padding: "14px",
                   fontSize: "16px",
                   fontWeight: 800,
-                  cursor: purchasing ? "not-allowed" : "pointer",
+                  cursor: creatingOrder ? "not-allowed" : "pointer",
                   boxShadow: "0 4px 15px rgba(245, 158, 11, 0.4)",
                   display: "flex",
                   justifyContent: "center",
@@ -1750,7 +2087,7 @@ function TokenShopModal({
                   gap: "8px",
                 }}
               >
-                {purchasing ? "Đang xử lý nạp token..." : `Xác Nhận Nạp +${activePkg.credits} Credits (${activePkg.priceVnd.toLocaleString("vi-VN")}₫)`}
+                {creatingOrder ? "Đang tạo đơn thanh toán..." : `Tiến Hành Thanh Toán Gói +${activePkg.credits} Credits (${activePkg.priceVnd.toLocaleString("vi-VN")}₫) →`}
               </button>
             )}
           </>
