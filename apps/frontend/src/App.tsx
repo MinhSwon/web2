@@ -55,6 +55,43 @@ export default function App() {
       .catch(() => logout());
   }, [token, loadProjects]);
 
+  // Handle VNPay / Gateway redirect returns (e.g. ?payment=success&orderCode=FFXXXXXX)
+  useEffect(() => {
+    const paymentStatus = searchParams.get("payment");
+    const orderCode = searchParams.get("orderCode");
+    if (paymentStatus === "success") {
+      setNotice(`🎉 Thanh toán thành công cho đơn hàng ${orderCode || ""}! Số dư Credit của bạn đã được cập nhật.`);
+      if (token) {
+        api<{ user: User }>("/api/auth/me", {}, token)
+          .then((me) => setUser(me.user))
+          .catch(console.error);
+      }
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (paymentStatus === "failed") {
+      setNotice(`⚠️ Giao dịch thanh toán chưa hoàn tất hoặc bị hủy.`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [searchParams, token]);
+
+  // Background real-time Credit synchronizer & notification
+  useEffect(() => {
+    if (!token || !user) return;
+    const interval = setInterval(async () => {
+      try {
+        const me = await api<{ user: User }>("/api/auth/me", {}, token);
+        if (me.user.credits > user.credits) {
+          const diff = me.user.credits - user.credits;
+          setUser(me.user);
+          setNotice(`🎉 Nạp tiền thành công! Bạn vừa nhận được +${diff} Credits (Số dư hiện tại: ${me.user.credits} Credits).`);
+        }
+      } catch (err) {
+        // silent
+      }
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [token, user]);
+
   useEffect(() => {
     if (selectedId) void loadDetail(selectedId).catch((error) => setNotice(errorText(error)));
   }, [selectedId, loadDetail]);
@@ -1880,17 +1917,51 @@ function TokenShopModal({
 
         {successMsg ? (
           <div style={{
-            backgroundColor: "rgba(16, 185, 129, 0.15)",
-            border: "1px solid #10b981",
-            borderRadius: "12px",
-            padding: "32px",
+            backgroundColor: "#0d281e",
+            border: "2px solid #10b981",
+            borderRadius: "16px",
+            padding: "36px 24px",
             textAlign: "center",
             color: "#6ee7b7",
-            margin: "20px 0"
+            margin: "20px 0",
+            boxShadow: "0 15px 40px rgba(16,185,129,0.25)"
           }}>
-            <span style={{ fontSize: "52px", display: "block", marginBottom: "12px" }}>🎉</span>
-            <h3 style={{ fontSize: "22px", color: "#fff", marginBottom: "8px" }}>Thanh Toán & Nạp Credit Thành Công!</h3>
-            <p style={{ fontSize: "15px" }}>{successMsg}</p>
+            <div style={{ fontSize: "56px", marginBottom: "12px" }}>🎉 💎 ✨</div>
+            <h3 style={{ fontSize: "24px", color: "#fff", margin: "0 0 8px", fontWeight: 800 }}>Thanh Toán & Nạp Credit Thành Công!</h3>
+            <p style={{ fontSize: "16px", color: "#a7f3d0", maxWidth: "520px", margin: "0 auto 20px" }}>
+              {successMsg}
+            </p>
+            <div style={{
+              backgroundColor: "rgba(0,0,0,0.35)",
+              borderRadius: "12px",
+              padding: "16px 24px",
+              maxWidth: "380px",
+              margin: "0 auto 24px",
+              border: "1px solid rgba(16,185,129,0.3)"
+            }}>
+              <div style={{ fontSize: "13px", color: "#94a3b8", marginBottom: "4px" }}>Số Dư Credit Của Bạn:</div>
+              <div style={{ fontSize: "32px", fontWeight: 900, color: "#f59e0b" }}>
+                💎 {user.credits} <span style={{ fontSize: "16px", color: "#cbd5e1", fontWeight: 400 }}>Credits</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                backgroundColor: "#10b981",
+                color: "#fff",
+                border: "none",
+                borderRadius: "10px",
+                padding: "14px 36px",
+                fontSize: "16px",
+                fontWeight: 800,
+                cursor: "pointer",
+                boxShadow: "0 4px 20px rgba(16,185,129,0.4)",
+                transition: "transform 0.1s"
+              }}
+            >
+              🚀 Bắt Đầu Tạo Video AI Ngay ➔
+            </button>
           </div>
         ) : currentOrderData ? (
           /* LIVE ACTIVE ORDER PAYMENT SCREEN */
