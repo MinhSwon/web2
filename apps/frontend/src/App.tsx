@@ -27,6 +27,7 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<"studio" | "library" | "admin">("studio");
   const [shareTarget, setShareTarget] = useState<{ jobId: string; title: string } | null>(null);
   const [showTransactions, setShowTransactions] = useState(false);
+  const [showTokenShop, setShowTokenShop] = useState(false);
 
   const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const sharedJobId = searchParams.get("v");
@@ -112,6 +113,17 @@ export default function App() {
                 🛡️ Quản Trị (Admin)
               </button>
             )}
+            <button
+              onClick={() => setShowTokenShop(true)}
+              style={{
+                background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+                color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px",
+                fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: "6px",
+                boxShadow: "0 2px 10px rgba(245,158,11,0.35)"
+              }}
+            >
+              💎 Mua Token
+            </button>
           </nav>
         </div>
         <div className="account-strip">
@@ -124,6 +136,16 @@ export default function App() {
           >
             💳 {user.credits} credits
           </span>
+          <button
+            onClick={() => setShowTokenShop(true)}
+            style={{
+              backgroundColor: "rgba(245,158,11,0.15)", color: "#f59e0b",
+              border: "1px solid rgba(245,158,11,0.3)", padding: "3px 8px", borderRadius: "4px",
+              fontSize: "12px", fontWeight: "bold", cursor: "pointer"
+            }}
+          >
+            ＋ Nạp
+          </button>
           <span>{user.display_name}</span>
           <button className="text-button" onClick={logout}>Đăng xuất</button>
         </div>
@@ -174,6 +196,7 @@ export default function App() {
                 }}
                 onError={(error) => setNotice(errorText(error))}
                 onShare={(jobId) => setShareTarget({ jobId, title: detail.project.title })}
+                onOpenShop={() => setShowTokenShop(true)}
               />
             )}
           </section>
@@ -192,6 +215,15 @@ export default function App() {
         <TransactionsModal
           token={token}
           onClose={() => setShowTransactions(false)}
+        />
+      )}
+
+      {showTokenShop && user && (
+        <TokenShopModal
+          token={token}
+          user={user}
+          onPurchased={(u) => setUser(u)}
+          onClose={() => setShowTokenShop(false)}
         />
       )}
     </div>
@@ -371,8 +403,8 @@ function EmptyState() {
   return <div className="empty-state"><span>✦</span><h2>Tạo dự án đầu tiên</h2><p>Studio sẽ xuất hiện ở đây sau khi bạn tạo một dự án.</p></div>;
 }
 
-function ProjectEditor({ token, detail, onChanged, onError, onShare }: {
-  token: string; detail: ProjectDetail; onChanged: () => Promise<void>; onError: (error: unknown) => void; onShare: (jobId: string) => void;
+function ProjectEditor({ token, detail, onChanged, onError, onShare, onOpenShop }: {
+  token: string; detail: ProjectDetail; onChanged: () => Promise<void>; onError: (error: unknown) => void; onShare: (jobId: string) => void; onOpenShop?: () => void;
 }) {
   const latest = detail.jobs[0];
   const [job, setJob] = useState<Job | undefined>(latest);
@@ -1129,6 +1161,305 @@ function TransactionsModal({ token, onClose }: { token: string; onClose: () => v
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type TokenPackage = {
+  id: string;
+  name: string;
+  credits: number;
+  priceVnd: number;
+  description: string;
+  badge: string | null;
+};
+
+function TokenShopModal({
+  token,
+  user,
+  onPurchased,
+  onClose,
+}: {
+  token: string;
+  user: User;
+  onPurchased: (updatedUser: User) => void;
+  onClose: () => void;
+}) {
+  const [packages, setPackages] = useState<TokenPackage[]>([]);
+  const [selectedPkg, setSelectedPkg] = useState<string>("pkg_pro");
+  const [paymentMethod, setPaymentMethod] = useState<"instant" | "vietqr" | "momo">("instant");
+  const [loading, setLoading] = useState(true);
+  const [purchasing, setPurchasing] = useState(false);
+  const [successMsg, setSuccessMsg] = useState("");
+
+  useEffect(() => {
+    api<{ packages: TokenPackage[] }>("/api/billing/packages", {}, token)
+      .then((data) => {
+        setPackages(data.packages);
+        if (data.packages[1]) setSelectedPkg(data.packages[1].id);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [token]);
+
+  const activePkg = packages.find((p) => p.id === selectedPkg);
+
+  async function handlePurchase() {
+    if (!activePkg) return;
+    setPurchasing(true);
+    try {
+      const methodLabels: Record<string, string> = {
+        instant: "Kích hoạt nhanh",
+        vietqr: "Chuyển khoản VietQR",
+        momo: "Ví MoMo",
+      };
+      const res = await api<{ success: boolean; user: User; message: string }>("/api/billing/purchase", {
+        method: "POST",
+        body: JSON.stringify({
+          packageId: activePkg.id,
+          paymentMethod: methodLabels[paymentMethod] || "Cổng thanh toán",
+        }),
+      }, token);
+
+      setSuccessMsg(res.message);
+      onPurchased(res.user);
+      setTimeout(() => {
+        onClose();
+      }, 1800);
+    } catch (err) {
+      alert(errorText(err));
+    } finally {
+      setPurchasing(false);
+    }
+  }
+
+  return (
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: "rgba(0,0,0,0.8)", backdropFilter: "blur(10px)",
+      display: "grid", placeItems: "center", zIndex: 1000, padding: "20px"
+    }}>
+      <div style={{
+        backgroundColor: "#132238", border: "1px solid rgba(255,255,255,0.15)",
+        borderRadius: "20px", padding: "32px", maxWidth: "800px", width: "100%",
+        maxHeight: "90vh", overflowY: "auto",
+        boxShadow: "0 25px 60px rgba(0,0,0,0.6)",
+        position: "relative",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "20px" }}>
+          <div>
+            <span className="eyebrow" style={{ color: "#f59e0b" }}>💎 Cửa Hàng Credit & Token</span>
+            <h2 style={{ fontSize: "24px", color: "#fff", margin: "4px 0 2px" }}>Nạp Credit Render Video AI</h2>
+            <p style={{ color: "#94a3b8", fontSize: "14px" }}>
+              Số dư hiện tại: <strong style={{ color: "#f59e0b" }}>{user.credits} Credits</strong> · 1 Credit = 1 Lần Render Video AI hoàn chỉnh
+            </p>
+          </div>
+          <button onClick={onClose} style={{ color: "#a0b0a8", fontSize: "24px", cursor: "pointer", background: "none", border: "none" }}>✕</button>
+        </div>
+
+        {successMsg ? (
+          <div style={{
+            backgroundColor: "rgba(16, 185, 129, 0.15)",
+            border: "1px solid #10b981",
+            borderRadius: "12px",
+            padding: "30px",
+            textAlign: "center",
+            color: "#6ee7b7",
+            margin: "20px 0"
+          }}>
+            <span style={{ fontSize: "48px", display: "block", marginBottom: "12px" }}>🎉</span>
+            <h3 style={{ fontSize: "20px", color: "#fff", marginBottom: "6px" }}>Thanh Toán & Nạp Credit Thành Công!</h3>
+            <p>{successMsg}</p>
+          </div>
+        ) : loading ? (
+          <div style={{ padding: "40px", textAlign: "center", color: "#94a3b8" }}>Đang tải bảng giá Token...</div>
+        ) : (
+          <>
+            {/* PRICING GRID */}
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+              gap: "14px",
+              marginBottom: "24px"
+            }}>
+              {packages.map((pkg) => {
+                const isSelected = selectedPkg === pkg.id;
+                return (
+                  <div
+                    key={pkg.id}
+                    onClick={() => setSelectedPkg(pkg.id)}
+                    style={{
+                      backgroundColor: isSelected ? "rgba(245, 158, 11, 0.1)" : "#1a2d4a",
+                      border: isSelected ? "2px solid #f59e0b" : "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: "14px",
+                      padding: "16px",
+                      cursor: "pointer",
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "space-between",
+                      position: "relative",
+                      transition: "all 0.2s ease",
+                      transform: isSelected ? "translateY(-2px)" : "none",
+                      boxShadow: isSelected ? "0 8px 20px rgba(245, 158, 11, 0.2)" : "none",
+                    }}
+                  >
+                    {pkg.badge && (
+                      <span style={{
+                        position: "absolute",
+                        top: "-10px",
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        backgroundColor: "#f59e0b",
+                        color: "#000",
+                        fontSize: "10px",
+                        fontWeight: 800,
+                        padding: "2px 8px",
+                        borderRadius: "10px",
+                        whiteSpace: "nowrap",
+                      }}>
+                        {pkg.badge}
+                      </span>
+                    )}
+
+                    <div>
+                      <h4 style={{ fontSize: "15px", color: "#fff", marginBottom: "4px" }}>{pkg.name}</h4>
+                      <div style={{ fontSize: "22px", fontWeight: 800, color: "#f59e0b", marginBottom: "6px" }}>
+                        +{pkg.credits} <small style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 400 }}>Credits</small>
+                      </div>
+                      <p style={{ fontSize: "12px", color: "#94a3b8", lineHeight: 1.4, marginBottom: "12px" }}>
+                        {pkg.description}
+                      </p>
+                    </div>
+
+                    <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: "10px", textAlign: "center" }}>
+                      <strong style={{ fontSize: "16px", color: "#fff" }}>
+                        {pkg.priceVnd.toLocaleString("vi-VN")}₫
+                      </strong>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* PAYMENT METHOD SELECTION */}
+            <div style={{ backgroundColor: "#1b2e4b", borderRadius: "14px", padding: "20px", marginBottom: "24px" }}>
+              <h4 style={{ fontSize: "14px", color: "#fff", marginBottom: "12px" }}>Chọn Phương Thức Thanh Toán:</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px", marginBottom: "16px" }}>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("instant")}
+                  style={{
+                    backgroundColor: paymentMethod === "instant" ? "#3b82f6" : "rgba(255,255,255,0.06)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "10px",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  ⚡ Nạp Nhanh (1-Click)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("vietqr")}
+                  style={{
+                    backgroundColor: paymentMethod === "vietqr" ? "#3b82f6" : "rgba(255,255,255,0.06)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "10px",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  🏦 Chuyển Khoản VietQR
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMethod("momo")}
+                  style={{
+                    backgroundColor: paymentMethod === "momo" ? "#3b82f6" : "rgba(255,255,255,0.06)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "10px",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    cursor: "pointer",
+                  }}
+                >
+                  📲 Ví MoMo
+                </button>
+              </div>
+
+              {paymentMethod === "vietqr" && activePkg && (
+                <div style={{
+                  backgroundColor: "rgba(0,0,0,0.25)",
+                  borderRadius: "10px",
+                  padding: "16px",
+                  display: "flex",
+                  gap: "16px",
+                  alignItems: "center",
+                  fontSize: "13px",
+                  color: "#cbd5e1"
+                }}>
+                  <div style={{
+                    width: "100px",
+                    height: "100px",
+                    backgroundColor: "#fff",
+                    borderRadius: "8px",
+                    display: "grid",
+                    placeItems: "center",
+                    color: "#000",
+                    fontWeight: "bold",
+                    textAlign: "center",
+                    padding: "6px",
+                    fontSize: "11px",
+                  }}>
+                    <span>[MÃ VIETQR DỰ ÁN]</span>
+                  </div>
+                  <div>
+                    <p style={{ margin: "0 0 4px" }}>Ngân hàng: <strong>MB BANK / TECHCOMBANK</strong></p>
+                    <p style={{ margin: "0 0 4px" }}>Số tài khoản: <strong>999988886666</strong></p>
+                    <p style={{ margin: "0 0 4px" }}>Chủ tài khoản: <strong>FRAME FOUNDRY AI</strong></p>
+                    <p style={{ margin: "0" }}>Nội dung: <strong>NAP {user.id.slice(0, 8).toUpperCase()}</strong></p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ACTION BUTTON */}
+            {activePkg && (
+              <button
+                type="button"
+                onClick={handlePurchase}
+                disabled={purchasing}
+                style={{
+                  width: "100%",
+                  background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "10px",
+                  padding: "14px",
+                  fontSize: "16px",
+                  fontWeight: 800,
+                  cursor: purchasing ? "not-allowed" : "pointer",
+                  boxShadow: "0 4px 15px rgba(245, 158, 11, 0.4)",
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+              >
+                {purchasing ? "Đang xử lý nạp token..." : `Xác Nhận Nạp +${activePkg.credits} Credits (${activePkg.priceVnd.toLocaleString("vi-VN")}₫)`}
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

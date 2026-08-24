@@ -244,6 +244,77 @@ export function createApp() {
     res.json({ transactions: result.rows });
   }));
 
+  // BILLING & TOKEN PACKAGES API
+  const TOKEN_PACKAGES = [
+    {
+      id: "pkg_starter",
+      name: "Gói Dùng Thử",
+      credits: 20,
+      priceVnd: 49000,
+      description: "Phù hợp để làm quen và trải nghiệm render video AI cơ bản.",
+      badge: null,
+    },
+    {
+      id: "pkg_pro",
+      name: "Gói Tiêu Chuẩn",
+      credits: 60,
+      priceVnd: 129000,
+      description: "Lựa chọn tốt nhất cho nhà sáng tạo nội dung cá nhân.",
+      badge: "🔥 Phổ Biến Nhất",
+    },
+    {
+      id: "pkg_studio",
+      name: "Gói Nhà Sáng Tạo",
+      credits: 150,
+      priceVnd: 279000,
+      description: "Dành cho shop bán hàng, affiliate và kênh video chuyên nghiệp.",
+      badge: "⭐ Tiết Kiệm 35%",
+    },
+    {
+      id: "pkg_enterprise",
+      name: "Gói Doanh Nghiệp",
+      credits: 500,
+      priceVnd: 799000,
+      description: "Không giới hạn sản xuất video AI số lượng lớn với tốc độ tối đa.",
+      badge: "💎 VIP / Studio",
+    },
+  ];
+
+  app.get("/api/billing/packages", requireAuth, asyncRoute(async (_req, res) => {
+    res.json({ packages: TOKEN_PACKAGES });
+  }));
+
+  app.post("/api/billing/purchase", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const { packageId, paymentMethod } = req.body;
+    const selectedPackage = TOKEN_PACKAGES.find((p) => p.id === packageId);
+    if (!selectedPackage) {
+      return res.status(400).json({ error: "INVALID_PACKAGE" });
+    }
+
+    const updatedUser = await transaction(async (client) => {
+      const uRes = await client.query(
+        "UPDATE users SET credits = credits + $1 WHERE id = $2 RETURNING id, email, display_name, role, credits",
+        [selectedPackage.credits, req.user!.id]
+      );
+      if (!uRes.rows[0]) throw Object.assign(new Error("USER_NOT_FOUND"), { status: 404 });
+
+      const description = `Mua ${selectedPackage.name} (+${selectedPackage.credits} Credits - ${selectedPackage.priceVnd.toLocaleString("vi-VN")}₫ qua ${paymentMethod || "Cổng thanh toán"})`;
+      await client.query(
+        "INSERT INTO transactions(user_id, kind, credits, description) VALUES ($1, 'CREDIT_PURCHASE', $2, $3)",
+        [req.user!.id, selectedPackage.credits, description]
+      );
+
+      return uRes.rows[0];
+    });
+
+    res.json({
+      success: true,
+      user: updatedUser,
+      package: selectedPackage,
+      message: `Đã nạp thành công ${selectedPackage.credits} Credits!`,
+    });
+  }));
+
   app.post("/api/projects/:projectId/render", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
     const input = renderSchema.parse(req.body);
     const idempotencyKey = req.header("idempotency-key") ?? crypto.randomUUID();
