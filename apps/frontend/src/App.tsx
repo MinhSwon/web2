@@ -318,6 +318,41 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
     const g = (window as any).google;
     const clientId = "1045439359942-cbacnii8usnh58vjdkpnoat38gpta2hn.apps.googleusercontent.com";
 
+    // 1. Try Google Identity Services One-Tap / Prompt
+    if (g?.accounts?.id) {
+      g.accounts.id.prompt((notification: any) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          // Fallback to OAuth2 Token Client Popup
+          if (g?.accounts?.oauth2) {
+            const client = g.accounts.oauth2.initTokenClient({
+              client_id: clientId,
+              scope: "https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+              callback: async (tokenResponse: any) => {
+                if (tokenResponse.access_token) {
+                  setBusy(true); setError("");
+                  try {
+                    const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+                      headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+                    });
+                    const profile = await res.json();
+                    if (profile.email) {
+                      const data = await api<{ token: string; user: User }>("/api/auth/google", {
+                        method: "POST",
+                        body: JSON.stringify({ email: profile.email, displayName: profile.name || profile.given_name }),
+                      });
+                      onAuthenticated(data.token, data.user);
+                    }
+                  } catch (err) { setError(errorText(err)); } finally { setBusy(false); }
+                }
+              },
+            });
+            client.requestAccessToken({ prompt: "consent" });
+          }
+        }
+      });
+      return;
+    }
+
     if (g?.accounts?.oauth2) {
       const client = g.accounts.oauth2.initTokenClient({
         client_id: clientId,
@@ -341,14 +376,11 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (token: string, user
           }
         },
       });
-      client.requestAccessToken();
+      client.requestAccessToken({ prompt: "consent" });
       return;
     }
 
-    // Direct OAuth 2.0 popup window fallback
-    const scope = encodeURIComponent("https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile");
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(window.location.origin)}&response_type=token&scope=${scope}`;
-    window.location.href = authUrl;
+    setError("Đang tải thư viện Google Sign-In, vui lòng thử lại sau vài giây...");
   }
 
   return (
