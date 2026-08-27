@@ -38,6 +38,14 @@ export async function uploadObject(key: string, body: Buffer, contentType: strin
   }));
 }
 
+export async function getObjectStream(key: string, range?: string) {
+  return internalClient.send(new GetObjectCommand({
+    Bucket: config.MINIO_BUCKET,
+    Key: key,
+    Range: range,
+  }));
+}
+
 export function createDownloadUrl(key: string) {
   return getSignedUrl(publicClient, new GetObjectCommand({
     Bucket: config.MINIO_BUCKET,

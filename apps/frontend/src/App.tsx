@@ -553,8 +553,19 @@ function ProjectEditor({ token, detail, onChanged, onError, onShare, onOpenShop 
   async function download() {
     if (!job) return;
     try {
-      const data = await api<{ job: Job }>(`/api/jobs/${job.id}`, {}, token);
-      if (data.job.download_url) window.open(data.job.download_url, "_blank", "noopener,noreferrer");
+      const res = await fetch(`/api/jobs/${job.id}/download`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error("Không thể tải video");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${detail.project.title || "video"}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
     } catch (error) { onError(error); }
   }
 
@@ -731,10 +742,25 @@ function RenderedLibrary({ token, onShare }: { token: string; onShare: (jobId: s
 
               <div style={{ display: "flex", gap: "8px", marginTop: "auto" }}>
                 {video.download_url && (
-                  <a
-                    href={video.download_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/jobs/${video.id}/download`, {
+                          headers: { Authorization: `Bearer ${token}` }
+                        });
+                        if (!res.ok) throw new Error("Không thể tải video");
+                        const blob = await res.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `${video.project_title || "video"}.mp4`;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        window.URL.revokeObjectURL(url);
+                      } catch (err) { alert(errorText(err)); }
+                    }}
                     style={{
                       flex: 1,
                       textAlign: "center",
@@ -742,13 +768,14 @@ function RenderedLibrary({ token, onShare }: { token: string; onShare: (jobId: s
                       color: "#fff",
                       padding: "10px",
                       borderRadius: "6px",
-                      textDecoration: "none",
+                      border: "none",
                       fontWeight: 600,
-                      fontSize: "14px"
+                      fontSize: "14px",
+                      cursor: "pointer"
                     }}
                   >
-                    ▶ Tải Video
-                  </a>
+                    ⬇ Tải Video MP4
+                  </button>
                 )}
                 <button
                   type="button"
@@ -1660,14 +1687,27 @@ function PublicVideoViewer({ jobId }: { jobId: string }) {
 
             <div style={{ display: "flex", gap: "12px" }}>
               {video.download_url && (
-                <a
-                  href={video.download_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ flex: 1, textAlign: "center", backgroundColor: "#ff6b4a", color: "#fff", padding: "12px", borderRadius: "8px", textDecoration: "none", fontWeight: 700, fontSize: "15px" }}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`/api/public/videos/${video.id}/download`);
+                      if (!res.ok) throw new Error("Không thể tải video");
+                      const blob = await res.blob();
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `${video.project_title || "video"}.mp4`;
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                      window.URL.revokeObjectURL(url);
+                    } catch (err) { alert(errorText(err)); }
+                  }}
+                  style={{ flex: 1, textAlign: "center", backgroundColor: "#ff6b4a", color: "#fff", padding: "12px", borderRadius: "8px", border: "none", fontWeight: 700, fontSize: "15px", cursor: "pointer" }}
                 >
-                  ▶ Tải Video MP4 Về Máy
-                </a>
+                  ⬇ Tải Video MP4 Về Máy
+                </button>
               )}
               <button
                 onClick={() => {

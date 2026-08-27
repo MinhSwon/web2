@@ -10,7 +10,7 @@ import { AuthRequest, requireAdmin, requireAuth, requireWorker, signToken } from
 import { config } from "./config";
 import { pool, query, transaction } from "./db";
 import { publishRenderJob } from "./queue";
-import { createDownloadUrl, createUploadUrl, uploadObject } from "./storage";
+import { createDownloadUrl, createUploadUrl, getObjectStream, uploadObject } from "./storage";
 import { sendVideoReadyEmail } from "./email";
 import {
   buildVietQRUrl,
@@ -600,11 +600,71 @@ export function createApp() {
     res.status(result.existing ? 200 : 202).json({ job: result.job });
   }));
 
+  // Helper to stream MinIO video output directly with Range header support
+  async function streamVideoOutput(outputKey: string, req: Request, res: Response, isDownload = false, filename = "video.mp4") {
+    try {
+      const range = req.headers.range;
+      const s3Response = await getObjectStream(outputKey, range);
+
+      res.setHeader("Content-Type", s3Response.ContentType || "video/mp4");
+      res.setHeader("Accept-Ranges", "bytes");
+      if (s3Response.ContentLength !== undefined) {
+        res.setHeader("Content-Length", s3Response.ContentLength);
+      }
+      if (s3Response.ContentRange) {
+        res.setHeader("Content-Range", s3Response.ContentRange);
+        res.status(206);
+      } else {
+        res.status(200);
+      }
+
+      if (isDownload) {
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
+      } else {
+        res.setHeader("Content-Disposition", "inline");
+      }
+
+      if (s3Response.Body) {
+        (s3Response.Body as any).pipe(res);
+      } else {
+        res.status(404).end();
+      }
+    } catch (err: any) {
+      console.error("Video stream error:", err);
+      if (err.name === "NoSuchKey") {
+        return res.status(404).json({ error: "VIDEO_FILE_NOT_FOUND" });
+      }
+      res.status(500).json({ error: "FAILED_TO_STREAM_VIDEO" });
+    }
+  }
+
+  // VIDEO STREAMING ENDPOINT (Authenticated)
+  app.get("/api/jobs/:jobId/stream", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const result = await query(
+      "SELECT r.*, p.title as project_title FROM render_jobs r JOIN projects p ON r.project_id = p.id WHERE r.id = $1 AND (r.user_id = $2 OR $3 = 'ADMIN')",
+      [req.params.jobId, req.user!.id, req.user!.role]
+    );
+    const job = result.rows[0];
+    if (!job || !job.output_key) return res.status(404).json({ error: "JOB_OR_VIDEO_NOT_FOUND" });
+    await streamVideoOutput(job.output_key, req, res, false, `${job.project_title || "video"}.mp4`);
+  }));
+
+  // VIDEO DOWNLOAD ENDPOINT (Authenticated)
+  app.get("/api/jobs/:jobId/download", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
+    const result = await query(
+      "SELECT r.*, p.title as project_title FROM render_jobs r JOIN projects p ON r.project_id = p.id WHERE r.id = $1 AND (r.user_id = $2 OR $3 = 'ADMIN')",
+      [req.params.jobId, req.user!.id, req.user!.role]
+    );
+    const job = result.rows[0];
+    if (!job || !job.output_key) return res.status(404).json({ error: "JOB_OR_VIDEO_NOT_FOUND" });
+    await streamVideoOutput(job.output_key, req, res, true, `${job.project_title || "video"}.mp4`);
+  }));
+
   app.get("/api/jobs/:jobId", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
     const result = await query("SELECT * FROM render_jobs WHERE id = $1 AND user_id = $2", [req.params.jobId, req.user!.id]);
     const job = result.rows[0];
     if (!job) return res.status(404).json({ error: "JOB_NOT_FOUND" });
-    const downloadUrl = job.output_key ? await createDownloadUrl(job.output_key) : null;
+    const downloadUrl = job.output_key ? `/api/jobs/${job.id}/stream` : null;
     res.json({ job: { ...job, download_url: downloadUrl } });
   }));
 
@@ -617,13 +677,39 @@ export function createApp() {
        ORDER BY r.completed_at DESC`,
       [req.user!.id]
     );
-    const videos = await Promise.all(
-      result.rows.map(async (row) => ({
-        ...row,
-        download_url: row.output_key ? await createDownloadUrl(row.output_key) : null,
-      }))
-    );
+    const videos = result.rows.map((row) => ({
+      ...row,
+      download_url: row.output_key ? `/api/jobs/${row.id}/stream` : null,
+    }));
     res.json({ videos });
+  }));
+
+  // PUBLIC VIDEO STREAMING ENDPOINT
+  app.get("/api/public/videos/:jobId/stream", asyncRoute(async (req, res) => {
+    const result = await query(
+      `SELECT r.id, r.status, r.output_key, p.title as project_title
+       FROM render_jobs r
+       JOIN projects p ON r.project_id = p.id
+       WHERE r.id = $1 AND r.status = 'COMPLETED'`,
+      [req.params.jobId]
+    );
+    const video = result.rows[0];
+    if (!video || !video.output_key) return res.status(404).json({ error: "VIDEO_NOT_FOUND" });
+    await streamVideoOutput(video.output_key, req, res, false, `${video.project_title || "video"}.mp4`);
+  }));
+
+  // PUBLIC VIDEO DOWNLOAD ENDPOINT
+  app.get("/api/public/videos/:jobId/download", asyncRoute(async (req, res) => {
+    const result = await query(
+      `SELECT r.id, r.status, r.output_key, p.title as project_title
+       FROM render_jobs r
+       JOIN projects p ON r.project_id = p.id
+       WHERE r.id = $1 AND r.status = 'COMPLETED'`,
+      [req.params.jobId]
+    );
+    const video = result.rows[0];
+    if (!video || !video.output_key) return res.status(404).json({ error: "VIDEO_NOT_FOUND" });
+    await streamVideoOutput(video.output_key, req, res, true, `${video.project_title || "video"}.mp4`);
   }));
 
   // PUBLIC VIDEO SHARING ENDPOINT
@@ -639,7 +725,7 @@ export function createApp() {
     const video = result.rows[0];
     if (!video) return res.status(404).json({ error: "VIDEO_NOT_FOUND" });
 
-    const download_url = video.output_key ? await createDownloadUrl(video.output_key) : null;
+    const download_url = video.output_key ? `/api/public/videos/${video.id}/stream` : null;
     res.json({ video: { ...video, download_url } });
   }));
 
