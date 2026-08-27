@@ -96,6 +96,12 @@ export default function App() {
     if (selectedId) void loadDetail(selectedId).catch((error) => setNotice(errorText(error)));
   }, [selectedId, loadDetail]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 4500);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
   function authenticated(nextToken: string, nextUser: User) {
     localStorage.setItem("saas-video-token", nextToken);
     setToken(nextToken);
