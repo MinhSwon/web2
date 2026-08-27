@@ -10,7 +10,7 @@ import { AuthRequest, requireAdmin, requireAuth, requireWorker, signToken } from
 import { config } from "./config";
 import { pool, query, transaction } from "./db";
 import { publishRenderJob } from "./queue";
-import { createDownloadUrl, createUploadUrl } from "./storage";
+import { createDownloadUrl, createUploadUrl, uploadObject } from "./storage";
 import { sendVideoReadyEmail } from "./email";
 import {
   buildVietQRUrl,
@@ -204,6 +204,36 @@ export function createApp() {
     const uploadUrl = await createUploadUrl(objectKey, input.contentType);
     res.json({ uploadUrl, objectKey, expiresIn: 900 });
   }));
+
+  app.post(
+    "/api/projects/:projectId/upload-direct",
+    requireAuth,
+    express.raw({ type: "*/*", limit: "50mb" }),
+    asyncRoute(async (req: AuthRequest, res) => {
+      const project = await ownedProject(String(req.params.projectId), req.user!.id);
+      if (!project) return res.status(404).json({ error: "PROJECT_NOT_FOUND" });
+
+      const fileName = String(req.query.fileName || "image.png");
+      const contentType = String(req.headers["content-type"] || "image/png");
+      const fileBuffer = req.body as Buffer;
+
+      if (!fileBuffer || !Buffer.isBuffer(fileBuffer) || fileBuffer.length === 0) {
+        return res.status(400).json({ error: "EMPTY_FILE" });
+      }
+
+      const objectKey = `users/${req.user!.id}/projects/${project.id}/${crypto.randomUUID()}-${safeFileName(fileName)}`;
+      await uploadObject(objectKey, fileBuffer, contentType);
+
+      const order = await query<{ next: number }>("SELECT count(*)::int AS next FROM project_assets WHERE project_id = $1", [project.id]);
+      const result = await query(
+        `INSERT INTO project_assets(project_id, object_key, file_name, content_type, size_bytes, sequence_order)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [project.id, objectKey, fileName, contentType, fileBuffer.length, order.rows[0].next],
+      );
+      await query("UPDATE projects SET updated_at = now() WHERE id = $1", [project.id]);
+      res.status(201).json({ asset: result.rows[0] });
+    }),
+  );
 
   app.post("/api/projects/:projectId/assets", requireAuth, asyncRoute(async (req: AuthRequest, res) => {
     const input = assetSchema.parse(req.body);

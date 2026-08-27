@@ -29,6 +29,15 @@ export function createUploadUrl(key: string, contentType: string) {
   }), { expiresIn: 900 });
 }
 
+export async function uploadObject(key: string, body: Buffer, contentType: string) {
+  return internalClient.send(new PutObjectCommand({
+    Bucket: config.MINIO_BUCKET,
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+  }));
+}
+
 export function createDownloadUrl(key: string) {
   return getSignedUrl(publicClient, new GetObjectCommand({
     Bucket: config.MINIO_BUCKET,

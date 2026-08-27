@@ -491,20 +491,19 @@ function ProjectEditor({ token, detail, onChanged, onError, onShare, onOpenShop 
     setUploading(true);
     try {
       for (const file of Array.from(files)) {
-        const presign = await api<{ uploadUrl: string; objectKey: string }>("/api/uploads/presign", {
+        const uploadUrl = `/api/projects/${detail.project.id}/upload-direct?fileName=${encodeURIComponent(file.name)}`;
+        const res = await fetch(uploadUrl, {
           method: "POST",
-          body: JSON.stringify({ projectId: detail.project.id, fileName: file.name, contentType: file.type }),
-        }, token);
-        let targetUrl = presign.uploadUrl;
-        if (targetUrl.includes("localhost:9000") && window.location.hostname !== "localhost") {
-          targetUrl = targetUrl.replace(/^http:\/\/localhost:9000/, window.location.origin);
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": file.type || "image/png",
+          },
+          body: file,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `Upload thất bại: ${file.name}`);
         }
-        const uploaded = await fetch(targetUrl, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
-        if (!uploaded.ok) throw new Error(`Upload thất bại: ${file.name}`);
-        await api(`/api/projects/${detail.project.id}/assets`, {
-          method: "POST",
-          body: JSON.stringify({ objectKey: presign.objectKey, fileName: file.name, contentType: file.type, sizeBytes: file.size }),
-        }, token);
       }
       await onChanged();
     } catch (error) { onError(error); } finally { setUploading(false); }
