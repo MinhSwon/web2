@@ -495,7 +495,11 @@ function ProjectEditor({ token, detail, onChanged, onError, onShare, onOpenShop 
           method: "POST",
           body: JSON.stringify({ projectId: detail.project.id, fileName: file.name, contentType: file.type }),
         }, token);
-        const uploaded = await fetch(presign.uploadUrl, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
+        let targetUrl = presign.uploadUrl;
+        if (targetUrl.includes("localhost:9000") && window.location.hostname !== "localhost") {
+          targetUrl = targetUrl.replace(/^http:\/\/localhost:9000/, window.location.origin);
+        }
+        const uploaded = await fetch(targetUrl, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
         if (!uploaded.ok) throw new Error(`Upload thất bại: ${file.name}`);
         await api(`/api/projects/${detail.project.id}/assets`, {
           method: "POST",
