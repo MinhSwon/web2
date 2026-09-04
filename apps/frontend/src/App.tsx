@@ -471,6 +471,14 @@ function ProjectEditor({ token, detail, onChanged, onError, onShare, onOpenShop 
   const [job, setJob] = useState<Job | undefined>(latest);
   const [uploading, setUploading] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [motionEngine, setMotionEngine] = useState<"ffmpeg" | "magichour">("ffmpeg");
+  const [imageDuration, setImageDuration] = useState<number>(5);
+
+  const tokenCost = useMemo(() => {
+    if (motionEngine === "ffmpeg") return 1;
+    const d = Math.max(1, Math.round(imageDuration));
+    return d <= 5 ? 3 : 3 + (d - 5);
+  }, [motionEngine, imageDuration]);
 
   useEffect(() => setJob(latest), [latest?.id]);
   useEffect(() => {
@@ -517,8 +525,11 @@ function ProjectEditor({ token, detail, onChanged, onError, onShare, onOpenShop 
         method: "POST",
         headers: { "Idempotency-Key": crypto.randomUUID() },
         body: JSON.stringify({
-          topic: form.get("topic"), voice: form.get("voice"),
-          imageDuration: Number(form.get("imageDuration")), resolution: form.get("resolution"),
+          topic: form.get("topic"),
+          voice: form.get("voice"),
+          imageDuration: Number(imageDuration),
+          resolution: form.get("resolution"),
+          motionEngine,
         }),
       }, token);
       setJob(data.job);
@@ -614,11 +625,62 @@ function ProjectEditor({ token, detail, onChanged, onError, onShare, onOpenShop 
               <option value="ko-KR-SunHiNeural">🇰🇷 ko-KR - Nữ (SunHi)</option>
             </select>
           </label>
+          <label>Mô hình chuyển động (Motion Engine)
+            <select
+              name="motionEngine"
+              value={motionEngine}
+              onChange={(e) => setMotionEngine(e.target.value as any)}
+              style={{ fontWeight: 600 }}
+            >
+              <option value="ffmpeg">🎥 FFmpeg Motion (Zoom Out / Thu nhỏ dần) - 1 Token</option>
+              <option value="magichour">🤖 Magic Hour AI (Chuyển động AI sống động) - từ 3 Tokens</option>
+            </select>
+          </label>
           <div className="control-row">
-            <label>Giây / ảnh<input name="imageDuration" type="number" min="1" max="10" defaultValue="3" /></label>
+            <label>Giây / ảnh ({imageDuration}s)
+              <input
+                name="imageDuration"
+                type="number"
+                min="1"
+                max="15"
+                value={imageDuration}
+                onChange={(e) => setImageDuration(Math.max(1, Math.min(15, Number(e.target.value) || 1)))}
+              />
+            </label>
             <label>Độ phân giải<select name="resolution" defaultValue="720p"><option>720p</option><option>1080p</option></select></label>
           </div>
-          <button className="render-button" disabled={!canRender || rendering}>{rendering ? "Đang gửi..." : "Render video"}<span>→</span></button>
+
+          <div style={{
+            margin: "10px 0 16px",
+            padding: "10px 14px",
+            background: motionEngine === "ffmpeg" ? "rgba(16, 185, 129, 0.12)" : "rgba(249, 115, 22, 0.12)",
+            border: `1px solid ${motionEngine === "ffmpeg" ? "rgba(16, 185, 129, 0.3)" : "rgba(249, 115, 22, 0.3)"}`,
+            borderRadius: "8px",
+            fontSize: "13px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center"
+          }}>
+            <div>
+              <strong style={{ color: motionEngine === "ffmpeg" ? "#34d399" : "#fb923c" }}>
+                {motionEngine === "ffmpeg" ? "⚡ FFmpeg Zoom Out" : "✨ Magic Hour AI"}
+              </strong>
+              <div style={{ color: "#94a3b8", fontSize: "11px", marginTop: "2px" }}>
+                {motionEngine === "ffmpeg"
+                  ? "Hiệu ứng thu nhỏ mượt mà, render siêu tốc, chỉ 1 Token"
+                  : `5s đầu = 3 Tokens ${imageDuration > 5 ? `(+${imageDuration - 5}s = +${imageDuration - 5} Tokens)` : ""}`}
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <span style={{ fontSize: "11px", color: "#94a3b8", display: "block" }}>Chi phí:</span>
+              <strong style={{ fontSize: "16px", color: "#f8fafc" }}>{tokenCost} Token{tokenCost > 1 ? "s" : ""}</strong>
+            </div>
+          </div>
+
+          <button className="render-button" disabled={!canRender || rendering}>
+            {rendering ? "Đang gửi..." : `Render video (${tokenCost} Token${tokenCost > 1 ? "s" : ""})`}
+            <span>→</span>
+          </button>
         </form>
         <JobProgress job={job} onDownload={download} onShare={onShare} />
       </aside>

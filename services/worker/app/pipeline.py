@@ -63,10 +63,12 @@ class VideoPipeline:
             await self.callback(job_id, "PROCESSING", 45, "captions", "Đang tạo phụ đề")
             await create_captions(voice_path, script, total_duration, caption_path)
 
-            await self.callback(job_id, "PROCESSING", 58, "motion", "Đang tạo chuyển động từ ảnh")
+            motion_engine = config.get("motionEngine", "ffmpeg").lower()
+            stage_msg = "Đang tạo chuyển động zoom ra bằng FFmpeg" if motion_engine == "ffmpeg" else "Đang tạo chuyển động AI Magic Hour"
+            await self.callback(job_id, "PROCESSING", 58, "motion", stage_msg)
             resolution = config.get("resolution", "720p")
             width, height = (1920, 1080) if resolution == "1080p" else (1280, 720)
-            clips = await self._create_clips(image_paths, work_dir, image_duration, width, height)
+            clips = await self._create_clips(image_paths, work_dir, image_duration, width, height, motion_engine)
 
             await self.callback(job_id, "PROCESSING", 78, "assembly", "Đang ghép video, âm thanh và phụ đề")
             joined = work_dir / "joined.mp4"
@@ -119,18 +121,42 @@ class VideoPipeline:
             "-t", str(duration), "-q:a", "9", "-acodec", "libmp3lame", str(output),
         ])
 
-    async def _create_clips(self, images: list[Path], work_dir: Path, duration: float, width: int, height: int) -> list[Path]:
+    async def _create_clips(
+        self, images: list[Path], work_dir: Path, duration: float, width: int, height: int, engine: str = "ffmpeg"
+    ) -> list[Path]:
         clips: list[Path] = []
         for index, image in enumerate(images):
             clip = work_dir / f"clip-{index:03d}.mp4"
-            has_ai_motion = await generate_motion_clip(image, clip)
-            if not has_ai_motion:
-                raise PipelineError(
-                    f"Không thể tạo video AI từ ảnh #{index + 1}: "
-                    "Hãy kiểm tra API Key cho AI Video trong file .env"
-                )
+            if engine == "ffmpeg":
+                await self._create_ffmpeg_zoom_out_clip(image, clip, duration, width, height)
+            else:
+                has_ai_motion = await generate_motion_clip(image, clip, duration=int(round(duration)))
+                if not has_ai_motion:
+                    # Fallback to FFmpeg Zoom Out if Magic Hour fails or is not configured
+                    print(f"Magic Hour unavailable for image #{index + 1}, falling back to FFmpeg Zoom Out")
+                    await self._create_ffmpeg_zoom_out_clip(image, clip, duration, width, height)
             clips.append(clip)
         return clips
+
+    async def _create_ffmpeg_zoom_out_clip(
+        self, image: Path, output: Path, duration: float, width: int, height: int, fps: int = 30
+    ) -> None:
+        total_frames = max(1, int(round(duration * fps)))
+        # Zoom-out effect (Ken Burns): Start at 1.4x and smoothly zoom out to 1.0x over the duration
+        filter_expr = (
+            f"scale={width}*1.5:-2,"
+            f"zoompan=z='if(lte(on,1),1.4,max(1.001,1.4-(on/{total_frames})*0.4))':"
+            f"x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=1:s={width}x{height}:fps={fps},"
+            f"trim=duration={duration}"
+        )
+        await run_command([
+            "ffmpeg", "-y", "-loop", "1", "-i", str(image),
+            "-vf", filter_expr,
+            "-t", str(duration),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            str(output),
+        ])
 
     async def _concat_clips(self, clips: list[Path], output: Path, work_dir: Path) -> None:
         manifest = work_dir / "clips.txt"

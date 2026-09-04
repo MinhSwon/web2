@@ -49,9 +49,22 @@ const assetSchema = z.object({
 const renderSchema = z.object({
   topic: z.string().max(120).default("Storytelling"),
   voice: z.string().max(80).default("vi-VN-HoaiMyNeural"),
-  imageDuration: z.number().min(1).max(10).default(3),
+  imageDuration: z.number().min(1).max(15).default(5),
   resolution: z.enum(["720p", "1080p"]).default("720p"),
+  motionEngine: z.enum(["ffmpeg", "magichour"]).default("ffmpeg"),
 });
+
+export function calculateRenderCost(motionEngine: string = "ffmpeg", imageDuration: number = 5): number {
+  if (motionEngine === "ffmpeg") {
+    return 1;
+  }
+  // Magic Hour: 5s = 3 tokens, each additional second = +1 token
+  const duration = Math.max(1, Math.round(imageDuration));
+  if (duration <= 5) {
+    return 3;
+  }
+  return 3 + (duration - 5);
+}
 const progressSchema = z.object({
   status: z.enum(["QUEUED", "PROCESSING", "COMPLETED", "FAILED", "CANCELED"]),
   progress: z.number().int().min(0).max(100),
@@ -564,9 +577,15 @@ export function createApp() {
       if (existing.rows[0]) return { job: existing.rows[0], assets: [], existing: true };
       const assets = await client.query("SELECT object_key, file_name, content_type FROM project_assets WHERE project_id = $1 ORDER BY sequence_order", [project.id]);
       if (!assets.rowCount) throw Object.assign(new Error("PROJECT_HAS_NO_ASSETS"), { status: 400 });
+      const cost = calculateRenderCost(input.motionEngine, input.imageDuration);
       const userResult = await client.query("SELECT credits FROM users WHERE id = $1 FOR UPDATE", [req.user!.id]);
-      if (userResult.rows[0].credits < 1) throw Object.assign(new Error("INSUFFICIENT_CREDITS"), { status: 402 });
-      await client.query("UPDATE users SET credits = credits - 1 WHERE id = $1", [req.user!.id]);
+      if (userResult.rows[0].credits < cost) {
+        throw Object.assign(new Error("INSUFFICIENT_CREDITS"), {
+          status: 402,
+          message: `Số dư không đủ. Tác vụ cần ${cost} tokens, bạn hiện có ${userResult.rows[0].credits} tokens.`
+        });
+      }
+      await client.query("UPDATE users SET credits = credits - $1 WHERE id = $2", [cost, req.user!.id]);
       const jobResult = await client.query(
         `INSERT INTO render_jobs(project_id, user_id, status, progress, stage, message, idempotency_key)
          VALUES ($1, $2, 'QUEUED', 2, 'queued', 'Đang chờ worker xử lý', $3) RETURNING *`,
@@ -574,11 +593,11 @@ export function createApp() {
       );
       const job = jobResult.rows[0];
       await client.query(
-        "INSERT INTO transactions(user_id, job_id, kind, credits, description) VALUES ($1, $2, 'RENDER_DEBIT', -1, $3)",
-        [req.user!.id, job.id, `Render project ${project.title}`],
+        "INSERT INTO transactions(user_id, job_id, kind, credits, description) VALUES ($1, $2, 'RENDER_DEBIT', $3, $4)",
+        [req.user!.id, job.id, -cost, `Render project ${project.title} (${input.motionEngine.toUpperCase()}, ${input.imageDuration}s/ảnh)`],
       );
       await client.query("UPDATE projects SET status = 'RENDERING', config = $2, updated_at = now() WHERE id = $1", [project.id, JSON.stringify(input)]);
-      return { job, project, assets: assets.rows, existing: false };
+      return { job, project, assets: assets.rows, existing: false, cost };
     });
 
     if (!result.existing) {
@@ -970,10 +989,15 @@ async function failAndRefund(jobId: string, errorCode: string, message: string) 
       "UPDATE render_jobs SET status = 'FAILED', progress = 100, stage = 'failed', message = $2, error_code = $3, refunded_at = now(), completed_at = now() WHERE id = $1",
       [jobId, message, errorCode],
     );
-    await client.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [job.user_id]);
+    const debitedRes = await client.query(
+      "SELECT ABS(credits) as amount FROM transactions WHERE job_id = $1 AND kind = 'RENDER_DEBIT'",
+      [jobId]
+    );
+    const refundAmount = debitedRes.rows[0]?.amount ?? 1;
+    await client.query("UPDATE users SET credits = credits + $1 WHERE id = $2", [refundAmount, job.user_id]);
     await client.query(
-      "INSERT INTO transactions(user_id, job_id, kind, credits, description) VALUES ($1, $2, 'RENDER_REFUND', 1, $3)",
-      [job.user_id, jobId, errorCode],
+      "INSERT INTO transactions(user_id, job_id, kind, credits, description) VALUES ($1, $2, 'RENDER_REFUND', $3, $4)",
+      [job.user_id, jobId, refundAmount, errorCode],
     );
   });
 }

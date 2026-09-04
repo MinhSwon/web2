@@ -180,7 +180,7 @@ def write_captions(text: str, duration: float, output: Path) -> None:
     output.write_text("\n".join(blocks), encoding="utf-8")
 
 
-async def generate_motion_clip(image_path: Path, output_clip: Path, prompt: str = "") -> bool:
+async def generate_motion_clip(image_path: Path, output_clip: Path, prompt: str = "", duration: int = 5) -> bool:
     # Magic Hour AI (Primary High Quality Image-to-Video API)
     if settings.magichour_api_key:
         try:
@@ -203,7 +203,7 @@ async def generate_motion_clip(image_path: Path, output_clip: Path, prompt: str 
                     up_res = await client.put(upload_url, content=image_path.read_bytes(), headers={"Content-Type": f"image/{ext}"})
                     if up_res.status_code in (200, 201):
                         job_payload = {
-                            "end_seconds": 5,
+                            "end_seconds": max(1, min(10, int(round(duration)))),
                             "assets": {"image_file_path": file_path},
                             "style": {"prompt": prompt or "Animate image smoothly with natural motion and cinematic detail"}
                         }
